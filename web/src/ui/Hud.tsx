@@ -22,6 +22,9 @@ interface HudProps {
   // opens the static full-repo map for a repo path in a new tab; omit the path
   // to use the current session's repo (trace.session.cwd)
   onOpenMap: (repo?: string) => void;
+  // while a video export records, the view toggle is locked so switching scenes
+  // can't tear down and replace the canvas the recorder is capturing
+  locked?: boolean;
 }
 
 const CHURN_PANEL_ROWS = 8;
@@ -38,7 +41,8 @@ export const Hud = memo(function Hud({
   churn,
   onViewChange,
   onSelectFile,
-  onOpenMap
+  onOpenMap,
+  locked = false
 }: HudProps) {
   const stats = trace?.stats;
   const [mapOpen, setMapOpen] = useState(false);
@@ -242,10 +246,18 @@ export const Hud = memo(function Hud({
       {city ? (
         <div className="hud-right">
           <div className="view-toggle" role="group" aria-label="Scene view">
-            <button className={view === "tree" ? "active" : ""} onClick={() => onViewChange("tree")}>
+            <button
+              className={view === "tree" ? "active" : ""}
+              onClick={() => onViewChange("tree")}
+              disabled={locked}
+            >
               Tree
             </button>
-            <button className={view === "terrain" ? "active" : ""} onClick={() => onViewChange("terrain")}>
+            <button
+              className={view === "terrain" ? "active" : ""}
+              onClick={() => onViewChange("terrain")}
+              disabled={locked}
+            >
               Terrain
             </button>
           </div>

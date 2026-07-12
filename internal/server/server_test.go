@@ -506,6 +506,61 @@ func TestRepoMapWithoutRepoRootReturns404(t *testing.T) {
 	}
 }
 
+func TestRepoMapCacheExpiresWhenRepoChanges(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "a.go"), []byte("package demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(Config{RepoRoot: repoRoot})
+	first, err := s.repoCityMap(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Files) != 1 {
+		t.Fatalf("initial files = %d, want 1", len(first.Files))
+	}
+
+	// add a file, then age the cache entry past its TTL: the next build must
+	// pick up the new file instead of returning the stale map
+	if err := os.WriteFile(filepath.Join(repoRoot, "b.go"), []byte("package demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	abs, _ := filepath.Abs(repoRoot)
+	s.repoMapMu.Lock()
+	entry := s.repoMaps[abs]
+	entry.builtAt = entry.builtAt.Add(-2 * repoMapTTL)
+	s.repoMaps[abs] = entry
+	s.repoMapMu.Unlock()
+
+	second, err := s.repoCityMap(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Files) != 2 {
+		t.Fatalf("files after change = %d, want 2 (stale cache returned)", len(second.Files))
+	}
+}
+
+func TestRepoMapCacheIsBounded(t *testing.T) {
+	s := New(Config{})
+	for i := 0; i < repoMapMaxEntries+5; i++ {
+		repo := t.TempDir()
+		if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte("package demo\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.repoCityMap(repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.repoMapMu.Lock()
+	n := len(s.repoMaps)
+	s.repoMapMu.Unlock()
+	if n > repoMapMaxEntries {
+		t.Fatalf("repo map cache size = %d, want <= %d", n, repoMapMaxEntries)
+	}
+}
+
 func writeServerSession(t *testing.T, path string, lines ...string) {
 	t.Helper()
 	content := ""

@@ -171,21 +171,30 @@ export default function App() {
     const canvas = canvasRef.current;
     const total = trace?.events.length ?? 0;
     if (!canvas || total === 0 || exporting) return;
+    // the recorder owns the playhead for the duration of the export; setting
+    // exporting=true locks the transport, scrubber, session rail, and view
+    // toggle (see the `exporting` prop threaded into Timeline/SessionRail/Hud)
+    // so nothing else moves the playhead or swaps the canvas mid-recording
+    const exportSessionKey = activeSessionKeyRef.current;
     const resumeSeq = useAppStore.getState().currentSeq;
     setExporting(true);
     setError(undefined);
     try {
-      const blob = await recordPlayback({
+      const { blob, extension } = await recordPlayback({
         canvas,
         total,
         setSeq: setCurrentSeq
       });
-      const name = trace?.session.id || activeSessionKeyRef.current || "session";
-      downloadBlob(blob, `mindwalk-${name}.webm`);
+      const name = trace?.session.id || exportSessionKey || "session";
+      downloadBlob(blob, `mindwalk-${name}.${extension}`);
     } catch (err) {
       setError(describeError(err, "exporting the video"));
     } finally {
-      setCurrentSeq(resumeSeq);
+      // only restore the playhead if we're still on the same session — a guard
+      // in case a switch slipped through; normally the UI lock prevents it
+      if (activeSessionKeyRef.current === exportSessionKey) {
+        setCurrentSeq(resumeSeq);
+      }
       setExporting(false);
     }
   }, [trace, exporting, setCurrentSeq, setError]);
@@ -266,6 +275,7 @@ export default function App() {
           onHarnessFilterChange={setHarnessFilter}
           onCollapse={collapseRail}
           onOpenMap={openMap}
+          locked={exporting}
         />
       )}
       <section className="stage">
@@ -309,6 +319,7 @@ export default function App() {
             onViewChange={setView}
             onSelectFile={setSelectedPath}
             onOpenMap={openMap}
+            locked={exporting}
           />
           {selectedFile ? (
             <Inspector

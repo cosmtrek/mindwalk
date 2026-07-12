@@ -52,6 +52,12 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
     setPlaying(false);
   }, [trace]);
 
+  // while a video export is recording, the recorder owns the playhead — force
+  // playback off so the Timeline timer can't fight it for currentSeq
+  useEffect(() => {
+    if (exporting) setPlaying(false);
+  }, [exporting]);
+
   // the timer and shortcuts read position via refs so ticking doesn't tear them down
   const seqRef = useRef(seq);
   const maxRef = useRef(max);
@@ -61,7 +67,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
   playingRef.current = playing;
 
   useEffect(() => {
-    if (!playing || total === 0) return;
+    if (!playing || total === 0 || exporting) return;
     // higher speeds keep the render rate bounded by advancing several events per tick
     const interval = Math.max(85, BASE_TICK_MS / speed);
     const step = Math.max(1, Math.round((speed * interval) / BASE_TICK_MS));
@@ -73,7 +79,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
       onChange(Math.min(seqRef.current + step, maxRef.current));
     }, interval);
     return () => window.clearInterval(timer);
-  }, [playing, speed, total, onChange]);
+  }, [playing, speed, total, onChange, exporting]);
 
   const togglePlay = useCallback(() => {
     if (!playingRef.current && seqRef.current >= maxRef.current) onChange(0);
@@ -118,9 +124,10 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
     [markSeqs, onChange]
   );
 
-  // playback shortcuts; scene and rail keep their own (⌘B lives in App)
+  // playback shortcuts; scene and rail keep their own (⌘B lives in App).
+  // suspended while exporting so a keypress can't move the recorded playhead.
   useEffect(() => {
-    if (!trace) return;
+    if (!trace || exporting) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -164,7 +171,10 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [trace, togglePlay, step, onChange, cycleSpeed, jumpEvent, jumpMark]);
+  }, [trace, exporting, togglePlay, step, onChange, cycleSpeed, jumpEvent, jumpMark]);
+
+  // transport + scrubber are inert with no trace, or while an export owns the playhead
+  const locked = total === 0 || exporting;
 
   const buckets = useMemo<Bucket[]>(() => {
     if (!trace || total === 0) return [];
@@ -222,7 +232,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
           <button
             className="icon-btn"
             onClick={() => onChange(0)}
-            disabled={total === 0}
+            disabled={locked}
             title="Restart (Home)"
             aria-label="Restart playback"
           >
@@ -231,7 +241,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
           <button
             className="icon-btn"
             onClick={() => step(-1)}
-            disabled={total === 0}
+            disabled={locked}
             title="Step back (←)"
             aria-label="Step back one event"
           >
@@ -240,7 +250,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
           <button
             className="play-btn"
             onClick={togglePlay}
-            disabled={total === 0}
+            disabled={locked}
             title={playing ? "Pause (Space)" : "Play (Space)"}
             aria-label={playing ? "Pause playback" : "Play playback"}
           >
@@ -250,7 +260,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
           <button
             className="icon-btn"
             onClick={() => step(1)}
-            disabled={total === 0}
+            disabled={locked}
             title="Step forward (→)"
             aria-label="Step forward one event"
           >
@@ -259,7 +269,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
           <button
             className={speed === 1 ? "speed-btn" : "speed-btn engaged"}
             onClick={cycleSpeed}
-            disabled={total === 0}
+            disabled={locked}
             title="Cycle playback speed (S)"
             aria-label={`Playback speed ${speed}x`}
           >
@@ -270,7 +280,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
               className={exporting ? "icon-btn recording" : "icon-btn"}
               onClick={onExport}
               disabled={total === 0 || exporting}
-              title={exporting ? "Recording video…" : "Export video (.webm)"}
+              title={exporting ? "Recording video…" : "Export video"}
               aria-label={exporting ? "Recording video" : "Export video"}
             >
               {exporting ? <Loader size={15} className="spin" /> : <Video size={15} />}
@@ -308,7 +318,7 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
             min={0}
             max={max}
             value={seq}
-            disabled={total === 0}
+            disabled={locked}
             onChange={(e) => onChange(Number(e.currentTarget.value))}
             aria-label="Playback position"
             aria-valuetext={event ? `event ${event.seq}: ${event.tool}` : "empty"}

@@ -19,6 +19,9 @@ interface SessionRailProps {
   onCollapse: () => void;
   // opens the static full-repo map for a repo path in a new tab
   onOpenMap: (repo: string) => void;
+  // while a video export records, session switching is locked so it can't swap
+  // the canvas or playhead out from under the recorder
+  locked?: boolean;
 }
 
 // memo: the app re-renders every playback tick; the rail's props only change
@@ -35,7 +38,8 @@ export const SessionRail = memo(function SessionRail({
   onHideEmptyChange,
   onHarnessFilterChange,
   onCollapse,
-  onOpenMap
+  onOpenMap,
+  locked = false
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
   const [repoPath, setRepoPath] = useState("");
@@ -134,6 +138,7 @@ export const SessionRail = memo(function SessionRail({
             key={session.key}
             className={session.key === activeKey ? "session-row active" : "session-row"}
             onClick={() => onSelect(session.key)}
+            disabled={locked}
           >
             <span className="session-title">{session.title || session.id}</span>
             <span className="session-meta">

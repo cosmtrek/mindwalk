@@ -54,8 +54,13 @@ type Server struct {
 	cacheFile map[string]fileFingerprint
 	inflight  map[string]*inflightLoad
 	summaries map[string]summaryCacheEntry
-	repoMaps  map[string]*model.CityMap
+	repoMaps  map[string]repoMapEntry
 	repoMapMu sync.Mutex
+}
+
+type repoMapEntry struct {
+	city    *model.CityMap
+	builtAt time.Time
 }
 
 type inflightLoad struct {
@@ -81,6 +86,10 @@ const (
 	sessionListTTL       = 5 * time.Second
 	traceCacheTTL        = 10 * time.Minute
 	traceCacheMaxEntries = 16
+	// repo map builds are relatively cheap; a short TTL keeps a long-running
+	// serve current as the tree changes without rebuilding on every request
+	repoMapTTL        = 30 * time.Second
+	repoMapMaxEntries = 16
 )
 
 func New(cfg Config) *Server {
@@ -94,7 +103,7 @@ func New(cfg Config) *Server {
 		cacheFile: map[string]fileFingerprint{},
 		inflight:  map[string]*inflightLoad{},
 		summaries: map[string]summaryCacheEntry{},
-		repoMaps:  map[string]*model.CityMap{},
+		repoMaps:  map[string]repoMapEntry{},
 	}
 }
 
@@ -114,9 +123,12 @@ func (s *Server) Start(openBrowser bool) error {
 		return err
 	}
 	addr := "http://" + ln.Addr().String()
-	// warm the session scan so the first page load doesn't wait on a cold
-	// walk over every session file
-	go func() { _, _ = s.listSessions() }()
+	// warm the session scan so the first page load doesn't wait on a cold walk
+	// over every session file. Map-only mode never lists sessions, so skip the
+	// scan of the whole Claude/Codex corpus.
+	if !s.cfg.MapOnly {
+		go func() { _, _ = s.listSessions() }()
+	}
 	if openBrowser {
 		pageURL := addr
 		switch {
@@ -184,8 +196,8 @@ func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request) {
 // handleRepoMap serves the citymap for a repo with no session / trace attached.
 // It backs the static full-repo map view (mindwalk map <repo> and the ?map=1 UI
 // mode). The repo path comes from the ?repo= query param, falling back to the
-// server's configured RepoRoot. Maps are deterministic, so each path is built
-// once and cached for the process lifetime.
+// server's configured RepoRoot. Maps are cached per path with a short TTL so a
+// long-running serve picks up tree changes, and the cache is size-bounded.
 //
 // The path is trusted: the server is localhost-only and already builds citymaps
 // for arbitrary session repos, so accepting a repo path here does not widen the
@@ -217,15 +229,35 @@ func (s *Server) repoCityMap(repo string) (*model.CityMap, error) {
 	}
 	s.repoMapMu.Lock()
 	defer s.repoMapMu.Unlock()
-	if city := s.repoMaps[repo]; city != nil {
-		return city, nil
+	if entry, ok := s.repoMaps[repo]; ok && time.Since(entry.builtAt) < repoMapTTL {
+		return entry.city, nil
 	}
 	city, err := citymap.Builder{}.Build(repo, nil)
 	if err != nil {
 		return nil, err
 	}
-	s.repoMaps[repo] = city
+	s.repoMaps[repo] = repoMapEntry{city: city, builtAt: time.Now()}
+	s.evictRepoMapsLocked()
 	return city, nil
+}
+
+// evictRepoMapsLocked bounds the repo-map cache by dropping the oldest entries
+// once it grows past repoMapMaxEntries. Caller must hold repoMapMu.
+func (s *Server) evictRepoMapsLocked() {
+	for len(s.repoMaps) > repoMapMaxEntries {
+		var oldestKey string
+		var oldest time.Time
+		for key, entry := range s.repoMaps {
+			if oldestKey == "" || entry.builtAt.Before(oldest) {
+				oldestKey = key
+				oldest = entry.builtAt
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(s.repoMaps, oldestKey)
+	}
 }
 
 func (s *Server) listSessions() ([]model.SessionMeta, error) {

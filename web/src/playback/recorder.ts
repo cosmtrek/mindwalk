@@ -13,6 +13,23 @@ export interface RecordOptions {
   signal?: AbortSignal; // cancel an in-flight recording
 }
 
+export interface RecordResult {
+  blob: Blob;
+  extension: string; // matches the recorded container (webm / mp4 / …)
+}
+
+// Map a MediaRecorder mimeType to a sensible file extension. Falls back to the
+// container subtype when it's an unknown-but-plausible type.
+function extensionForMime(mimeType: string): string {
+  const base = mimeType.split(";")[0].trim().toLowerCase(); // strip codecs
+  const subtype = base.split("/")[1] ?? "";
+  if (subtype.includes("webm")) return "webm";
+  if (subtype.includes("mp4")) return "mp4";
+  if (subtype.includes("x-matroska") || subtype.includes("matroska")) return "mkv";
+  if (subtype.includes("ogg")) return "ogv";
+  return subtype || "webm";
+}
+
 const DEFAULT_FPS = 30;
 // Long sessions would otherwise produce minutes of video; cap the run and let
 // the playhead cover more events per frame. Short sessions play close to
@@ -36,9 +53,10 @@ export function recordingSupported(): boolean {
   );
 }
 
-// Records the playback and resolves with a webm Blob. Rejects if the browser
-// can't record or the run is aborted.
-export function recordPlayback(opts: RecordOptions): Promise<Blob> {
+// Records the playback and resolves with the recorded blob and a file extension
+// that matches the actual container. Rejects if the browser can't record or the
+// run is aborted.
+export function recordPlayback(opts: RecordOptions): Promise<RecordResult> {
   const { canvas, total, setSeq, onProgress, signal } = opts;
   const fps = opts.fps ?? DEFAULT_FPS;
 
@@ -55,7 +73,7 @@ export function recordPlayback(opts: RecordOptions): Promise<Blob> {
   const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
   const chunks: BlobPart[] = [];
 
-  return new Promise<Blob>((resolve, reject) => {
+  return new Promise<RecordResult>((resolve, reject) => {
     let rafId = 0;
     let startTs = 0;
     let settled = false;
@@ -70,7 +88,11 @@ export function recordPlayback(opts: RecordOptions): Promise<Blob> {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(new Blob(chunks, { type: mimeType ?? "video/webm" }));
+      // the browser may have chosen a container different from what we
+      // requested; trust recorder.mimeType so the blob type and file extension
+      // match what was actually recorded
+      const actualType = recorder.mimeType || mimeType || "video/webm";
+      resolve({ blob: new Blob(chunks, { type: actualType }), extension: extensionForMime(actualType) });
     };
 
     const fail = (err: Error) => {
