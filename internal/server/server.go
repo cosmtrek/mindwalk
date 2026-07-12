@@ -23,6 +23,7 @@ import (
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
+	"github.com/cosmtrek/mindwalk/internal/githistory"
 	"github.com/cosmtrek/mindwalk/internal/model"
 )
 
@@ -37,6 +38,7 @@ type Config struct {
 	Dev         bool
 	RepoRoot    string
 	MapOnly     bool
+	HistoryOnly bool
 }
 
 type Server struct {
@@ -56,6 +58,14 @@ type Server struct {
 	summaries map[string]summaryCacheEntry
 	repoMaps  map[string]repoMapEntry
 	repoMapMu sync.Mutex
+	histories map[string]*historyEntry
+	historyMu sync.Mutex
+}
+
+type historyEntry struct {
+	trace   *model.Trace
+	city    *model.CityMap
+	builtAt time.Time
 }
 
 type repoMapEntry struct {
@@ -90,6 +100,10 @@ const (
 	// serve current as the tree changes without rebuilding on every request
 	repoMapTTL        = 30 * time.Second
 	repoMapMaxEntries = 16
+	// git history changes far less often than a live worktree and is expensive
+	// to rebuild (git log + citymap), so it holds a much longer TTL
+	historyTTL        = 10 * time.Minute
+	historyMaxEntries = 16
 )
 
 func New(cfg Config) *Server {
@@ -104,6 +118,7 @@ func New(cfg Config) *Server {
 		inflight:  map[string]*inflightLoad{},
 		summaries: map[string]summaryCacheEntry{},
 		repoMaps:  map[string]repoMapEntry{},
+		histories: map[string]*historyEntry{},
 	}
 }
 
@@ -112,6 +127,7 @@ func (s *Server) Start(openBrowser bool) error {
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSessionResource)
 	mux.HandleFunc("/api/repomap", s.handleRepoMap)
+	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/", s.handleStatic)
 
 	port := s.cfg.Port
@@ -134,6 +150,8 @@ func (s *Server) Start(openBrowser bool) error {
 		switch {
 		case s.cfg.MapOnly:
 			pageURL += "/?map=1"
+		case s.cfg.HistoryOnly:
+			pageURL += "/?history=1"
 		case s.cfg.OpenSession != "":
 			pageURL += "/?session=" + url.QueryEscape(s.openSessionKey())
 		}
@@ -257,6 +275,93 @@ func (s *Server) evictRepoMapsLocked() {
 			return
 		}
 		delete(s.repoMaps, oldestKey)
+	}
+}
+
+// handleHistory serves a synthetic session built from a repo's git history:
+// one commit per event, replayed oldest-to-newest. Unlike the static map, this
+// emits the full {trace, city} snapshot shape so the frontend drives it through
+// the normal playback path. The repo path comes from ?repo=, falling back to
+// the configured RepoRoot. Same trust model as handleRepoMap (localhost, read
+// only). The build is cached per repo with a short TTL and is size-bounded.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	repo := r.URL.Query().Get("repo")
+	if repo == "" {
+		repo = s.cfg.RepoRoot
+	}
+	if repo == "" {
+		http.Error(w, "no repo configured", http.StatusNotFound)
+		return
+	}
+	entry, err := s.repoHistory(repo)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, struct {
+		Trace *model.Trace   `json:"trace"`
+		City  *model.CityMap `json:"city"`
+	}{Trace: entry.trace, City: entry.city})
+}
+
+func (s *Server) repoHistory(repo string) (*historyEntry, error) {
+	if abs, err := filepath.Abs(repo); err == nil {
+		repo = abs
+	}
+	// fast path: return a fresh cached build without holding the lock across the
+	// expensive git log + citymap build
+	s.historyMu.Lock()
+	if entry := s.histories[repo]; entry != nil && time.Since(entry.builtAt) < historyTTL {
+		s.historyMu.Unlock()
+		return entry, nil
+	}
+	s.historyMu.Unlock()
+
+	// build outside the lock so concurrent requests for other repos aren't
+	// serialized behind this one. A duplicate concurrent build of the same repo
+	// is possible but harmless (idempotent); the last writer wins on insert.
+	trace, err := githistory.Builder{}.Build(repo)
+	if err != nil {
+		return nil, err
+	}
+	// build the citymap WITH the trace so deleted files register as ghosts,
+	// then wire file IDs and recompute stats with the real repo file count —
+	// exactly what loadTraceAndMap does for a real session
+	city, err := citymap.Builder{}.Build(repo, trace)
+	if err != nil {
+		city = emptyCityMap(repo)
+	} else {
+		assignFileIDs(trace, city)
+	}
+	trace.Stats = model.ComputeStats(trace, repoFileCount(city), trace.Stats.Observability.Errors)
+	entry := &historyEntry{trace: trace, city: city, builtAt: time.Now()}
+
+	s.historyMu.Lock()
+	s.histories[repo] = entry
+	s.evictHistoriesLocked()
+	s.historyMu.Unlock()
+	return entry, nil
+}
+
+// evictHistoriesLocked bounds the history cache. Caller must hold historyMu.
+func (s *Server) evictHistoriesLocked() {
+	for len(s.histories) > historyMaxEntries {
+		var oldestKey string
+		var oldest time.Time
+		for key, entry := range s.histories {
+			if oldestKey == "" || entry.builtAt.Before(oldest) {
+				oldestKey = key
+				oldest = entry.builtAt
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(s.histories, oldestKey)
 	}
 }
 

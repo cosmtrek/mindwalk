@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -558,6 +559,116 @@ func TestRepoMapCacheIsBounded(t *testing.T) {
 	s.repoMapMu.Unlock()
 	if n > repoMapMaxEntries {
 		t.Fatalf("repo map cache size = %d, want <= %d", n, repoMapMaxEntries)
+	}
+}
+
+func TestHistoryServesTraceAndCity(t *testing.T) {
+	repo := initGitRepo(t)
+
+	s := New(Config{RepoRoot: repo, HistoryOnly: true})
+	resp := httptest.NewRecorder()
+	s.handleHistory(resp, httptest.NewRequest(http.MethodGet, "/api/history", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("history status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var payload struct {
+		Trace model.Trace   `json:"trace"`
+		City  model.CityMap `json:"city"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	// seed event + at least one commit; harness is git
+	if len(payload.Trace.Events) < 2 || payload.Trace.Session.Harness != "git" {
+		t.Fatalf("trace = %#v", payload.Trace.Session)
+	}
+	if payload.City.Repo.Root == "" {
+		t.Fatalf("city missing repo root: %#v", payload.City.Repo)
+	}
+}
+
+func TestHistoryWithoutRepoRootReturns404(t *testing.T) {
+	s := New(Config{})
+	resp := httptest.NewRecorder()
+	s.handleHistory(resp, httptest.NewRequest(http.MethodGet, "/api/history", nil))
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("history status = %d, want 404", resp.Code)
+	}
+}
+
+func TestHistoryCacheExpiresAndIsBounded(t *testing.T) {
+	repo := initGitRepo(t)
+	s := New(Config{})
+
+	first, err := s.repoHistory(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs, _ := filepath.Abs(repo)
+
+	// within TTL: same cached entry
+	second, err := s.repoHistory(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("expected cached history entry within TTL")
+	}
+
+	// age past TTL: rebuilt (new entry)
+	s.historyMu.Lock()
+	entry := s.histories[abs]
+	entry.builtAt = entry.builtAt.Add(-2 * historyTTL)
+	s.histories[abs] = entry
+	s.historyMu.Unlock()
+	third, err := s.repoHistory(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first {
+		t.Fatal("expected history to rebuild after TTL")
+	}
+
+	// eviction bound
+	for i := 0; i < historyMaxEntries+5; i++ {
+		if _, err := s.repoHistory(initGitRepo(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.historyMu.Lock()
+	n := len(s.histories)
+	s.historyMu.Unlock()
+	if n > historyMaxEntries {
+		t.Fatalf("history cache size = %d, want <= %d", n, historyMaxEntries)
+	}
+}
+
+// initGitRepo makes a temp git repo with two commits for history tests.
+func initGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "Tester")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "first")
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package demo\n\nfunc B() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "second")
+	return dir
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 

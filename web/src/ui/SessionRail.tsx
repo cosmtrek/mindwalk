@@ -1,4 +1,4 @@
-import { Eye, EyeOff, FolderOpen, PanelLeftClose, RefreshCw, Search } from "lucide-react";
+import { Eye, EyeOff, FolderOpen, GitCommitVertical, PanelLeftClose, RefreshCw, Search } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import { sessionVisible } from "../state/filters";
 import { LogoMark } from "./LogoMark";
@@ -19,6 +19,8 @@ interface SessionRailProps {
   onCollapse: () => void;
   // opens the static full-repo map for a repo path in a new tab
   onOpenMap: (repo: string) => void;
+  // opens the git-history replay for a repo path in a new tab
+  onOpenHistory: (repo: string) => void;
   // while a video export records, session switching is locked so it can't swap
   // the canvas or playhead out from under the recorder
   locked?: boolean;
@@ -39,6 +41,7 @@ export const SessionRail = memo(function SessionRail({
   onHarnessFilterChange,
   onCollapse,
   onOpenMap,
+  onOpenHistory,
   locked = false
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
@@ -167,21 +170,34 @@ export const SessionRail = memo(function SessionRail({
         }}
       >
         <label className="rail-open-label" htmlFor="rail-open-input">
-          Open a repository map
+          Explore a repository
         </label>
+        <input
+          id="rail-open-input"
+          type="text"
+          className="rail-open-input"
+          placeholder="/path/to/repo"
+          value={repoPath}
+          onChange={(e) => setRepoPath(e.currentTarget.value)}
+          spellCheck={false}
+        />
         <div className="rail-open-row">
-          <input
-            id="rail-open-input"
-            type="text"
-            className="rail-open-input"
-            placeholder="/path/to/repo"
-            value={repoPath}
-            onChange={(e) => setRepoPath(e.currentTarget.value)}
-            spellCheck={false}
-          />
-          <button type="submit" className="rail-open-btn" disabled={repoPath.trim() === ""} title="Open repository map">
+          <button type="submit" className="rail-open-btn" disabled={repoPath.trim() === ""} title="Open static repository map">
             <FolderOpen size={13} aria-hidden />
-            <span>Open…</span>
+            <span>Map</span>
+          </button>
+          <button
+            type="button"
+            className="rail-open-btn"
+            disabled={repoPath.trim() === ""}
+            title="Replay the repository's git history"
+            onClick={() => {
+              const path = repoPath.trim();
+              if (path) onOpenHistory(path);
+            }}
+          >
+            <GitCommitVertical size={13} aria-hidden />
+            <span>History</span>
           </button>
         </div>
       </form>

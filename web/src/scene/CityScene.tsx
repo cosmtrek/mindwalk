@@ -26,6 +26,16 @@ interface CitySceneProps {
   // static map mode: with no session to drive attention height, raise terrain
   // columns by file size (lines of code) instead of leaving the plain flat
   locHeights?: boolean;
+  // git history mode: color each touched file by the size (churn) of the commit
+  // that last touched it, on the LOC tier ramp
+  historyColors?: boolean;
+  // git history mode: paths touched by the commit at the current playhead —
+  // drawn blue to mark whose turn it is
+  currentTouchPaths?: Set<string>;
+  // git history mode: log2 of the largest single-commit file churn across the
+  // whole history — the fixed normalization ceiling for the LOC color ramp, so
+  // a file's tier doesn't drift as the playhead moves
+  historyMaxLog?: number;
 }
 
 // Attention terrain: the map is a flat dark plain (fog of war); height is
@@ -85,13 +95,27 @@ function locColor(t: number): THREE.Color {
   return LOC_RAMP[LOC_RAMP.length - 1].color.clone();
 }
 
+// git history: files touched by the commit at the current playhead glow blue,
+// marking whose turn it is this frame
+const HISTORY_BLUE = new THREE.Color("#4ea3e0");
+
 interface TerrainSlot {
   fileId: number;
   target: number;
   color: THREE.Color;
 }
 
-export function CityScene({ city, playback, selectedPath, onSelect, onCanvasReady, locHeights }: CitySceneProps) {
+export function CityScene({
+  city,
+  playback,
+  selectedPath,
+  onSelect,
+  onCanvasReady,
+  locHeights,
+  historyColors,
+  currentTouchPaths,
+  historyMaxLog = 0
+}: CitySceneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const tileMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const terrainMeshRef = useRef<THREE.InstancedMesh | null>(null);
@@ -510,6 +534,19 @@ export function CityScene({ city, playback, selectedPath, onSelect, onCanvasRead
     const maxLog = locHeights
       ? Math.log2(Math.max(1, city.files.reduce((m, f) => Math.max(m, f.lines), 1)))
       : 0;
+
+    // git history mode: churn of the last commit that touched a file, looked up
+    // per touched file from the playback history (each file's event list). The
+    // normalization ceiling (historyMaxLog) is precomputed from the full trace
+    // and passed in, so it's stable across the playhead and we don't scan the
+    // whole history here every tick.
+    const lastCommitLOC = (path: string): number => {
+      const events = playback.historyByPath.get(path);
+      const last = events?.[events.length - 1];
+      const pair = last?.targets.find((t) => t.path === path)?.lines?.[0];
+      return pair ? pair[0] + pair[1] : 0;
+    };
+
     for (const file of city.files) {
       const touch = playback.touchByFile.get(file.id);
       const selected = file.path === selectedPath;
@@ -517,6 +554,16 @@ export function CityScene({ city, playback, selectedPath, onSelect, onCanvasRead
       if (touch) {
         const visits = playback.visitsByFile.get(file.id) ?? 1;
         let color = colors[touch];
+        if (historyColors) {
+          // color by commit size (churn) on the LOC ramp; the current commit's
+          // files override to blue
+          if (currentTouchPaths?.has(file.path)) {
+            color = HISTORY_BLUE.clone();
+          } else {
+            const t = locFraction(lastCommitLOC(file.path), historyMaxLog);
+            color = locColor(t);
+          }
+        }
         if (file.ghost) color = color.clone().lerp(colors.ghost, 0.45);
         if (selected) color = colors.selected;
         slots.push({ fileId: file.id, target: attentionHeight(touch, visits), color });
@@ -544,7 +591,7 @@ export function CityScene({ city, playback, selectedPath, onSelect, onCanvasRead
     if (terrain.instanceColor) terrain.instanceColor.needsUpdate = true;
     if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
     slotsRef.current = slots;
-  }, [city, playback, selectedPath, locHeights]);
+  }, [city, playback, selectedPath, locHeights, historyColors, currentTouchPaths, historyMaxLog]);
 
   // the inspector opens over the right edge; pan the selected tile clear of it
   useEffect(() => {
