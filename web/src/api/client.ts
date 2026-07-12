@@ -34,3 +34,11 @@ export function getCityMap(key: string): Promise<CityMap> {
 export function getSessionSnapshot(key: string): Promise<{ trace: Trace; city: CityMap }> {
   return getJSON<{ trace: Trace; city: CityMap }>(`/api/sessions/${encodeURIComponent(key)}/snapshot`);
 }
+
+// backs the static full-repo map view: the citymap for a repo, with no session
+// or trace attached. Without a repo path the server falls back to its
+// configured RepoRoot (the `mindwalk map <repo>` case).
+export function getRepoMap(repo?: string): Promise<CityMap> {
+  const url = repo ? `/api/repomap?repo=${encodeURIComponent(repo)}` : "/api/repomap";
+  return getJSON<CityMap>(url);
+}

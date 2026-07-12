@@ -1,7 +1,8 @@
 import { PanelLeftOpen } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { describeError, getSessionSnapshot, listSessions } from "./api/client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { describeError, getRepoMap, getSessionSnapshot, listSessions } from "./api/client";
 import { PlaybackEngine } from "./playback/reducer";
+import { downloadBlob, recordingSupported, recordPlayback } from "./playback/recorder";
 import { CityScene } from "./scene/CityScene";
 import { TreeScene } from "./scene/TreeScene";
 import { sessionVisible } from "./state/filters";
@@ -27,10 +28,12 @@ export default function App() {
     hideEmpty,
     harnessFilter,
     railCollapsed,
+    mapOnly,
     setView,
     setSessions,
     setActiveSession,
     setData,
+    setCityOnly,
     setCurrentSeq,
     setSelectedPath,
     setLoading,
@@ -46,6 +49,14 @@ export default function App() {
   const pendingLoads = useRef(0);
   const activeSessionKeyRef = useRef(activeSessionKey);
   activeSessionKeyRef.current = activeSessionKey;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  // scenes hand up their live <canvas> so the video exporter can capture it;
+  // stable identity keeps the scene mount effect from remounting on every render
+  const handleCanvasReady = useCallback((canvas: HTMLCanvasElement | null) => {
+    canvasRef.current = canvas;
+  }, []);
 
   const beginLoading = useCallback(() => {
     pendingLoads.current++;
@@ -123,6 +134,25 @@ export default function App() {
     }
   }, [beginLoading, endLoading, harnessFilter, hideEmpty, loadSession, setActiveSession, setError, setSessions]);
 
+  const loadRepoMap = useCallback(async (repo?: string) => {
+    beginLoading();
+    setError(undefined);
+    try {
+      const city = await getRepoMap(repo);
+      setCityOnly(city);
+    } catch (err) {
+      setError(describeError(err, "loading the repository map"));
+    } finally {
+      endLoading();
+    }
+  }, [beginLoading, endLoading, setCityOnly, setError]);
+
+  // open the static map for a repo in a new tab so the running session stays put
+  const openMap = useCallback((repo?: string) => {
+    const url = repo ? `/?map=1&repo=${encodeURIComponent(repo)}` : "/?map=1";
+    window.open(url, "_blank", "noopener");
+  }, []);
+
   const refresh = useCallback(() => {
     if (manualRefreshInFlight.current) return;
     manualRefreshInFlight.current = true;
@@ -136,6 +166,29 @@ export default function App() {
     setActiveSession(key);
     void loadSession(key);
   }, [loadSession, setActiveSession]);
+
+  const exportVideo = useCallback(async () => {
+    const canvas = canvasRef.current;
+    const total = trace?.events.length ?? 0;
+    if (!canvas || total === 0 || exporting) return;
+    const resumeSeq = useAppStore.getState().currentSeq;
+    setExporting(true);
+    setError(undefined);
+    try {
+      const blob = await recordPlayback({
+        canvas,
+        total,
+        setSeq: setCurrentSeq
+      });
+      const name = trace?.session.id || activeSessionKeyRef.current || "session";
+      downloadBlob(blob, `mindwalk-${name}.webm`);
+    } catch (err) {
+      setError(describeError(err, "exporting the video"));
+    } finally {
+      setCurrentSeq(resumeSeq);
+      setExporting(false);
+    }
+  }, [trace, exporting, setCurrentSeq, setError]);
 
   // stable callbacks keep SessionRail's memo effective across playback ticks
   const collapseRail = useCallback(() => setRailCollapsed(true), [setRailCollapsed]);
@@ -153,7 +206,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void scan(false);
+    const params = new URL(window.location.href).searchParams;
+    if (params.get("map") === "1") {
+      void loadRepoMap(params.get("repo") ?? undefined);
+    } else {
+      void scan(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -193,23 +251,26 @@ export default function App() {
   }, [trace]);
 
   return (
-    <main className={railCollapsed ? "app-frame rail-collapsed" : "app-frame"}>
-      <SessionRail
-        sessions={sessions}
-        activeKey={activeSessionKey}
-        loading={loading}
-        hideEmpty={hideEmpty}
-        harnessFilter={harnessFilter}
-        collapsed={railCollapsed}
-        onSelect={selectSession}
-        onRefresh={refresh}
-        onHideEmptyChange={setHideEmpty}
-        onHarnessFilterChange={setHarnessFilter}
-        onCollapse={collapseRail}
-      />
+    <main className={mapOnly ? "app-frame rail-collapsed" : railCollapsed ? "app-frame rail-collapsed" : "app-frame"}>
+      {mapOnly ? null : (
+        <SessionRail
+          sessions={sessions}
+          activeKey={activeSessionKey}
+          loading={loading}
+          hideEmpty={hideEmpty}
+          harnessFilter={harnessFilter}
+          collapsed={railCollapsed}
+          onSelect={selectSession}
+          onRefresh={refresh}
+          onHideEmptyChange={setHideEmpty}
+          onHarnessFilterChange={setHarnessFilter}
+          onCollapse={collapseRail}
+          onOpenMap={openMap}
+        />
+      )}
       <section className="stage">
         <div className="viewport">
-          {railCollapsed ? (
+          {!mapOnly && railCollapsed ? (
             <button
               className="rail-expand"
               onClick={expandRail}
@@ -220,9 +281,22 @@ export default function App() {
             </button>
           ) : null}
           {view === "tree" ? (
-            <TreeScene city={city} playback={playback} selectedPath={selectedPath} onSelect={setSelectedPath} />
+            <TreeScene
+              city={city}
+              playback={playback}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+              onCanvasReady={handleCanvasReady}
+            />
           ) : (
-            <CityScene city={city} playback={playback} selectedPath={selectedPath} onSelect={setSelectedPath} />
+            <CityScene
+              city={city}
+              playback={playback}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+              onCanvasReady={handleCanvasReady}
+              locHeights={mapOnly}
+            />
           )}
           <Hud
             trace={trace}
@@ -234,6 +308,7 @@ export default function App() {
             churn={churn}
             onViewChange={setView}
             onSelectFile={setSelectedPath}
+            onOpenMap={openMap}
           />
           {selectedFile ? (
             <Inspector
@@ -244,7 +319,7 @@ export default function App() {
               onJumpTo={setCurrentSeq}
             />
           ) : null}
-          {!loading && sessions.length === 0 ? (
+          {!mapOnly && !loading && sessions.length === 0 ? (
             <div className="empty-stage">
               <div className="card">
                 <h2>No sessions found</h2>
@@ -256,11 +331,17 @@ export default function App() {
             </div>
           ) : null}
           {loading ? (
-            <div className="toast">{sessions.length === 0 ? "Scanning sessions…" : "Reading trace…"}</div>
+            <div className="toast">{mapOnly ? "Building the map…" : sessions.length === 0 ? "Scanning sessions…" : "Reading trace…"}</div>
           ) : null}
           {error ? <div className="toast error">{error}</div> : null}
         </div>
-        <Timeline trace={trace} currentSeq={currentSeq} onChange={setCurrentSeq} />
+        <Timeline
+          trace={trace}
+          currentSeq={currentSeq}
+          onChange={setCurrentSeq}
+          onExport={recordingSupported() ? exportVideo : undefined}
+          exporting={exporting}
+        />
       </section>
     </main>
   );

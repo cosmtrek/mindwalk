@@ -390,6 +390,66 @@ dd {
   background: var(--moon);
 }
 
+.rail-open {
+  display: grid;
+  gap: 6px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+.rail-open-label {
+  color: var(--faint);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rail-open-row {
+  display: flex;
+  gap: 6px;
+}
+
+.rail-open-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  background: var(--panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+}
+
+.rail-open-input::placeholder {
+  color: var(--faint);
+}
+
+.rail-open-input:focus {
+  outline: none;
+  border-color: var(--muted);
+}
+
+.rail-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  color: var(--ink);
+  font-size: var(--text-xs);
+  font-weight: 560;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.rail-open-btn:hover:not(:disabled) {
+  background: var(--panel-raised);
+}
+
+.rail-open-btn:disabled {
+  opacity: 0.4;
+}
+
 .rail-foot {
   padding: 10px 18px 14px;
   border-top: 1px solid var(--hairline);
@@ -655,6 +715,86 @@ dd {
 .view-toggle button.active {
   color: oklch(0.95 0.02 88);
   background: var(--panel-raised);
+}
+
+.map-controls {
+  position: relative;
+  pointer-events: auto;
+  justify-self: end;
+}
+
+.map-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-size: var(--text-xs);
+  font-weight: 560;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+}
+
+.map-btn:hover {
+  color: var(--ink);
+  background: var(--panel-raised);
+}
+
+.map-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  min-width: 220px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.4);
+}
+
+.map-menu-row {
+  padding: 6px 8px;
+  text-align: left;
+  font-size: var(--text-xs);
+  color: var(--ink);
+  border-radius: 4px;
+}
+
+.map-menu-row:hover {
+  background: var(--panel);
+}
+
+.map-menu-form {
+  display: flex;
+  gap: 6px;
+}
+
+.map-menu-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: var(--text-xs);
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+}
+
+.map-menu-go {
+  padding: 5px 11px;
+  font-size: var(--text-xs);
+  font-weight: 560;
+  color: var(--ink);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+}
+
+.map-menu-go:disabled {
+  opacity: 0.4;
 }
 
 .legend-dot {
@@ -974,6 +1114,23 @@ dd {
 .icon-btn:hover {
   color: var(--ink);
   background: var(--panel-raised);
+}
+
+.icon-btn.recording {
+  color: var(--warm, #e0a458);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .play-btn {

@@ -17,10 +17,12 @@ interface AppState {
   hideEmpty: boolean;
   harnessFilter?: string;
   railCollapsed: boolean;
+  mapOnly: boolean;
   setView: (view: SceneView) => void;
   setSessions: (sessions: SessionMeta[]) => void;
   setActiveSession: (key?: string) => void;
   setData: (trace: Trace, city: CityMap) => void;
+  setCityOnly: (city: CityMap) => void;
   setCurrentSeq: (seq: number) => void;
   setSelectedPath: (path?: string) => void;
   setLoading: (loading: boolean) => void;
@@ -50,11 +52,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   hideEmpty: initialFilters.hideEmpty,
   harnessFilter: initialFilters.harness,
   railCollapsed: loadRailCollapsed(),
+  mapOnly: false,
   setView: (view) => set({ view }),
   setSessions: (sessions) => set({ sessions }),
   setActiveSession: (activeSessionKey) =>
     set({ activeSessionKey, trace: undefined, city: undefined, currentSeq: 0, selectedPath: undefined }),
   setData: (trace, city) => set({ trace, city, currentSeq: Math.max(0, trace.events.length - 1) }),
+  // static full-repo map: render the city with no session/trace attached
+  setCityOnly: (city) => set({ city, trace: undefined, currentSeq: 0, selectedPath: undefined, mapOnly: true }),
   setCurrentSeq: (currentSeq) => set({ currentSeq }),
   setSelectedPath: (selectedPath) => set({ selectedPath }),
   setLoading: (loading) => set({ loading }),

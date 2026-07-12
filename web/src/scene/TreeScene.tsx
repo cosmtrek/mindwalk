@@ -22,6 +22,7 @@ interface TreeSceneProps {
   playback: FilePlayback;
   selectedPath?: string;
   onSelect: (path?: string) => void;
+  onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
 }
 
 // Firefly tree: the repo is a radial tree — directories fork, files are
@@ -60,7 +61,7 @@ const LABEL_Y = 1.8;
 // the inspector docks on the right; selection pans the camera clear of it
 const INSPECTOR_RESERVED_PX = 348;
 
-export function TreeScene({ city, playback, selectedPath, onSelect }: TreeSceneProps) {
+export function TreeScene({ city, playback, selectedPath, onSelect, onCanvasReady }: TreeSceneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const leafMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const ghostMeshRef = useRef<THREE.InstancedMesh | null>(null);
@@ -111,6 +112,7 @@ export function TreeScene({ city, playback, selectedPath, onSelect }: TreeSceneP
     renderer.setSize(host.clientWidth, host.clientHeight);
     rendererRef.current = renderer;
     host.appendChild(renderer.domElement);
+    onCanvasReady?.(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = !reduced;
@@ -282,8 +284,9 @@ export function TreeScene({ city, playback, selectedPath, onSelect }: TreeSceneP
       renderer.dispose();
       host.removeChild(renderer.domElement);
       scene.clear();
+      onCanvasReady?.(null);
     };
-  }, [onSelect]);
+  }, [onSelect, onCanvasReady]);
 
   // grow the skeleton: ground, edges, leaves, labels
   useEffect(() => {

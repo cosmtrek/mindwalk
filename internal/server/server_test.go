@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -442,6 +443,66 @@ func TestServerSkipsCodexSubagentSessions(t *testing.T) {
 	}
 	if !foundSubagent {
 		t.Fatalf("explicit subagent missing from %#v", explicitSessions)
+	}
+}
+
+func TestRepoMapServesCitymapWithoutSession(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "a.go"), []byte("package demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "b.go"), []byte("package demo\n\nfunc B() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(Config{RepoRoot: repoRoot, MapOnly: true})
+	resp := httptest.NewRecorder()
+	s.handleRepoMap(resp, httptest.NewRequest(http.MethodGet, "/api/repomap", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("repomap status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var city model.CityMap
+	if err := json.Unmarshal(resp.Body.Bytes(), &city); err != nil {
+		t.Fatal(err)
+	}
+	if len(city.Files) != 2 || city.Repo.Root == "" {
+		t.Fatalf("city = %#v", city)
+	}
+
+	// A second request returns the cached build.
+	if _, err := s.repoCityMap(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepoMapAcceptsRepoQueryParam(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "a.go"), []byte("package demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No RepoRoot configured; the repo comes entirely from the query param.
+	s := New(Config{})
+	resp := httptest.NewRecorder()
+	s.handleRepoMap(resp, httptest.NewRequest(http.MethodGet, "/api/repomap?repo="+url.QueryEscape(repoRoot), nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("repomap status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var city model.CityMap
+	if err := json.Unmarshal(resp.Body.Bytes(), &city); err != nil {
+		t.Fatal(err)
+	}
+	if len(city.Files) != 1 {
+		t.Fatalf("city = %#v", city)
+	}
+}
+
+func TestRepoMapWithoutRepoRootReturns404(t *testing.T) {
+	s := New(Config{})
+	resp := httptest.NewRecorder()
+	s.handleRepoMap(resp, httptest.NewRequest(http.MethodGet, "/api/repomap", nil))
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("repomap status = %d, want 404", resp.Code)
 	}
 }
 

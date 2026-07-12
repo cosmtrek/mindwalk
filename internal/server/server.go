@@ -36,6 +36,7 @@ type Config struct {
 	OpenSession string
 	Dev         bool
 	RepoRoot    string
+	MapOnly     bool
 }
 
 type Server struct {
@@ -53,6 +54,8 @@ type Server struct {
 	cacheFile map[string]fileFingerprint
 	inflight  map[string]*inflightLoad
 	summaries map[string]summaryCacheEntry
+	repoMaps  map[string]*model.CityMap
+	repoMapMu sync.Mutex
 }
 
 type inflightLoad struct {
@@ -91,6 +94,7 @@ func New(cfg Config) *Server {
 		cacheFile: map[string]fileFingerprint{},
 		inflight:  map[string]*inflightLoad{},
 		summaries: map[string]summaryCacheEntry{},
+		repoMaps:  map[string]*model.CityMap{},
 	}
 }
 
@@ -98,6 +102,7 @@ func (s *Server) Start(openBrowser bool) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSessionResource)
+	mux.HandleFunc("/api/repomap", s.handleRepoMap)
 	mux.HandleFunc("/", s.handleStatic)
 
 	port := s.cfg.Port
@@ -114,7 +119,10 @@ func (s *Server) Start(openBrowser bool) error {
 	go func() { _, _ = s.listSessions() }()
 	if openBrowser {
 		pageURL := addr
-		if s.cfg.OpenSession != "" {
+		switch {
+		case s.cfg.MapOnly:
+			pageURL += "/?map=1"
+		case s.cfg.OpenSession != "":
 			pageURL += "/?session=" + url.QueryEscape(s.openSessionKey())
 		}
 		_ = openURL(pageURL)
@@ -171,6 +179,53 @@ func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleRepoMap serves the citymap for a repo with no session / trace attached.
+// It backs the static full-repo map view (mindwalk map <repo> and the ?map=1 UI
+// mode). The repo path comes from the ?repo= query param, falling back to the
+// server's configured RepoRoot. Maps are deterministic, so each path is built
+// once and cached for the process lifetime.
+//
+// The path is trusted: the server is localhost-only and already builds citymaps
+// for arbitrary session repos, so accepting a repo path here does not widen the
+// read surface. The builder only reads the tree (git ls-files / walk).
+func (s *Server) handleRepoMap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	repo := r.URL.Query().Get("repo")
+	if repo == "" {
+		repo = s.cfg.RepoRoot
+	}
+	if repo == "" {
+		http.Error(w, "no repo configured", http.StatusNotFound)
+		return
+	}
+	city, err := s.repoCityMap(repo)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, city)
+}
+
+func (s *Server) repoCityMap(repo string) (*model.CityMap, error) {
+	if abs, err := filepath.Abs(repo); err == nil {
+		repo = abs
+	}
+	s.repoMapMu.Lock()
+	defer s.repoMapMu.Unlock()
+	if city := s.repoMaps[repo]; city != nil {
+		return city, nil
+	}
+	city, err := citymap.Builder{}.Build(repo, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.repoMaps[repo] = city
+	return city, nil
 }
 
 func (s *Server) listSessions() ([]model.SessionMeta, error) {

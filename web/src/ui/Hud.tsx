@@ -1,3 +1,4 @@
+import { Map as MapIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { ActionCounts, CityMap, MetricObservability, Trace } from "../types";
 import type { SceneView } from "../state/store";
@@ -18,6 +19,9 @@ interface HudProps {
   churn: ChurnEntry[];
   onViewChange: (view: SceneView) => void;
   onSelectFile: (path: string) => void;
+  // opens the static full-repo map for a repo path in a new tab; omit the path
+  // to use the current session's repo (trace.session.cwd)
+  onOpenMap: (repo?: string) => void;
 }
 
 const CHURN_PANEL_ROWS = 8;
@@ -33,9 +37,13 @@ export const Hud = memo(function Hud({
   seenNow,
   churn,
   onViewChange,
-  onSelectFile
+  onSelectFile,
+  onOpenMap
 }: HudProps) {
   const stats = trace?.stats;
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapPath, setMapPath] = useState("");
+  const sessionRepo = trace?.session.cwd;
   const readFinal = stats ? stats.fovea - stats.edited : 0;
   const unvisitedNow = stats ? Math.max(0, stats.filesInRepo - editedNow - readNow - seenNow) : 0;
   const unvisitedFinal = stats ? Math.max(0, stats.filesInRepo - stats.fovea - stats.parafovea) : 0;
@@ -241,8 +249,54 @@ export const Hud = memo(function Hud({
               Terrain
             </button>
           </div>
+          <div className="map-controls">
+            <button
+              className="map-btn"
+              onClick={() => setMapOpen((open) => !open)}
+              aria-expanded={mapOpen}
+              data-hint="Open a static full-repo map — this session's repo, or any repo path"
+            >
+              <MapIcon size={13} />
+              <span>Map</span>
+            </button>
+            {mapOpen ? (
+              <div className="map-menu">
+                {sessionRepo ? (
+                  <button className="map-menu-row" onClick={() => onOpenMap(sessionRepo)} title={sessionRepo}>
+                    This session's repo
+                  </button>
+                ) : null}
+                <form
+                  className="map-menu-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const path = mapPath.trim();
+                    if (path) onOpenMap(path);
+                  }}
+                >
+                  <input
+                    type="text"
+                    className="map-menu-input"
+                    placeholder="/path/to/repo"
+                    value={mapPath}
+                    onChange={(e) => setMapPath(e.currentTarget.value)}
+                    spellCheck={false}
+                  />
+                  <button type="submit" className="map-menu-go" disabled={mapPath.trim() === ""}>
+                    Open
+                  </button>
+                </form>
+              </div>
+            ) : null}
+          </div>
           <div className="encode-note">
-            {view === "tree" ? "glow ∝ revisits" : "height ∝ depth × revisits"}
+            {view === "tree"
+              ? trace
+                ? "glow ∝ revisits"
+                : "static map"
+              : trace
+                ? "height ∝ depth × revisits"
+                : "height ∝ lines"}
           </div>
         </div>
       ) : null}

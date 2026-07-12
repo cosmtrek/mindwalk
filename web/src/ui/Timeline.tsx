@@ -1,4 +1,4 @@
-import { Pause, Play, RotateCcw, StepBack, StepForward } from "lucide-react";
+import { Loader, Pause, Play, RotateCcw, StepBack, StepForward, Video } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Action, Mark, Trace, TraceEvent } from "../types";
 
@@ -6,6 +6,8 @@ interface TimelineProps {
   trace?: Trace;
   currentSeq: number;
   onChange: (seq: number) => void;
+  onExport?: () => void;
+  exporting?: boolean;
 }
 
 const BUCKETS = 160;
@@ -38,7 +40,7 @@ const MARK_LABEL: Record<Mark["type"], string> = {
 
 const STRIP_ACTIONS: Action[] = ["search", "read", "edit", "verify", "exec"];
 
-export function Timeline({ trace, currentSeq, onChange }: TimelineProps) {
+export function Timeline({ trace, currentSeq, onChange, onExport, exporting = false }: TimelineProps) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
   const total = trace?.events.length ?? 0;
@@ -263,6 +265,17 @@ export function Timeline({ trace, currentSeq, onChange }: TimelineProps) {
           >
             {speed}×
           </button>
+          {onExport ? (
+            <button
+              className={exporting ? "icon-btn recording" : "icon-btn"}
+              onClick={onExport}
+              disabled={total === 0 || exporting}
+              title={exporting ? "Recording video…" : "Export video (.webm)"}
+              aria-label={exporting ? "Recording video" : "Export video"}
+            >
+              {exporting ? <Loader size={15} className="spin" /> : <Video size={15} />}
+            </button>
+          ) : null}
         </div>
 
         <div className="strip">

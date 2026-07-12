@@ -1,4 +1,4 @@
-import { Eye, EyeOff, PanelLeftClose, RefreshCw, Search } from "lucide-react";
+import { Eye, EyeOff, FolderOpen, PanelLeftClose, RefreshCw, Search } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import { sessionVisible } from "../state/filters";
 import { LogoMark } from "./LogoMark";
@@ -17,6 +17,8 @@ interface SessionRailProps {
   onHideEmptyChange: (hide: boolean) => void;
   onHarnessFilterChange: (harness?: string) => void;
   onCollapse: () => void;
+  // opens the static full-repo map for a repo path in a new tab
+  onOpenMap: (repo: string) => void;
 }
 
 // memo: the app re-renders every playback tick; the rail's props only change
@@ -32,9 +34,11 @@ export const SessionRail = memo(function SessionRail({
   onRefresh,
   onHideEmptyChange,
   onHarnessFilterChange,
-  onCollapse
+  onCollapse,
+  onOpenMap
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
+  const [repoPath, setRepoPath] = useState("");
   const harnesses = useMemo(() => [...new Set(sessions.map((s) => s.harness))].sort(), [sessions]);
   const emptyCount = useMemo(() => sessions.filter((s) => s.eventCount === 0).length, [sessions]);
   // a persisted filter can name a harness with no sessions this scan; treating
@@ -149,6 +153,33 @@ export const SessionRail = memo(function SessionRail({
           </p>
         ) : null}
       </div>
+      <form
+        className="rail-open"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const path = repoPath.trim();
+          if (path) onOpenMap(path);
+        }}
+      >
+        <label className="rail-open-label" htmlFor="rail-open-input">
+          Open a repository map
+        </label>
+        <div className="rail-open-row">
+          <input
+            id="rail-open-input"
+            type="text"
+            className="rail-open-input"
+            placeholder="/path/to/repo"
+            value={repoPath}
+            onChange={(e) => setRepoPath(e.currentTarget.value)}
+            spellCheck={false}
+          />
+          <button type="submit" className="rail-open-btn" disabled={repoPath.trim() === ""} title="Open repository map">
+            <FolderOpen size={13} aria-hidden />
+            <span>Open…</span>
+          </button>
+        </div>
+      </form>
       <div className="rail-foot">
         {shown.length === sessions.length
           ? `${sessions.length} session${sessions.length === 1 ? "" : "s"}`

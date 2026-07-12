@@ -22,6 +22,10 @@ interface CitySceneProps {
   playback: FilePlayback;
   selectedPath?: string;
   onSelect: (path?: string) => void;
+  onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
+  // static map mode: with no session to drive attention height, raise terrain
+  // columns by file size (lines of code) instead of leaving the plain flat
+  locHeights?: boolean;
 }
 
 // Attention terrain: the map is a flat dark plain (fog of war); height is
@@ -43,13 +47,51 @@ function attentionHeight(touch: Touch, visits: number): number {
   return base * (1 + 0.35 * Math.log2(Math.max(visits, 1)));
 }
 
+// static map height: normalized lines of code, log-scaled so a few huge files
+// don't flatten everything else. maxLog is log2(largest file's lines).
+const LOC_MIN_H = 0.3;
+const LOC_MAX_H = 16;
+// gamma > 1 exaggerates the top end: small files stay low, big files spike, so
+// the skyline reads as a city (towers vs shacks) instead of a uniform plateau
+const LOC_HEIGHT_GAMMA = 2.2;
+// normalized 0..1 position of a file by lines of code (log-scaled)
+function locFraction(lines: number, maxLog: number): number {
+  if (maxLog <= 0) return 0;
+  return Math.min(1, Math.log2(Math.max(lines, 1)) / maxLog);
+}
+function locHeight(t: number): number {
+  return LOC_MIN_H + Math.pow(t, LOC_HEIGHT_GAMMA) * (LOC_MAX_H - LOC_MIN_H);
+}
+
+// LOC tier ramp: small files stay grey, then warm up through orange and purple
+// to red for the largest files. Stops are interpolated so the terrain reads as
+// a continuous gradient rather than hard bands.
+const LOC_RAMP: { at: number; color: THREE.Color }[] = [
+  { at: 0.0, color: new THREE.Color("#5b6372") }, // grey (matches unvisited)
+  { at: 0.35, color: new THREE.Color("#e0894f") }, // orange
+  { at: 0.7, color: new THREE.Color("#9a6bd8") }, // purple
+  { at: 1.0, color: new THREE.Color("#e0524f") } // red
+];
+function locColor(t: number): THREE.Color {
+  for (let i = 1; i < LOC_RAMP.length; i++) {
+    if (t <= LOC_RAMP[i].at) {
+      const lo = LOC_RAMP[i - 1];
+      const hi = LOC_RAMP[i];
+      const span = hi.at - lo.at;
+      const k = span > 0 ? (t - lo.at) / span : 0;
+      return lo.color.clone().lerp(hi.color, k);
+    }
+  }
+  return LOC_RAMP[LOC_RAMP.length - 1].color.clone();
+}
+
 interface TerrainSlot {
   fileId: number;
   target: number;
   color: THREE.Color;
 }
 
-export function CityScene({ city, playback, selectedPath, onSelect }: CitySceneProps) {
+export function CityScene({ city, playback, selectedPath, onSelect, onCanvasReady, locHeights }: CitySceneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const tileMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const terrainMeshRef = useRef<THREE.InstancedMesh | null>(null);
@@ -114,6 +156,7 @@ export function CityScene({ city, playback, selectedPath, onSelect }: CitySceneP
     renderer.setSize(host.clientWidth, host.clientHeight);
     rendererRef.current = renderer;
     host.appendChild(renderer.domElement);
+    onCanvasReady?.(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = !reduced;
@@ -281,8 +324,9 @@ export function CityScene({ city, playback, selectedPath, onSelect }: CitySceneP
       renderer.dispose();
       host.removeChild(renderer.domElement);
       scene.clear();
+      onCanvasReady?.(null);
     };
-  }, [onSelect]);
+  }, [onSelect, onCanvasReady]);
 
   // build the plain: ground, grid, district plates, flat file tiles
   useEffect(() => {
@@ -461,6 +505,11 @@ export function CityScene({ city, playback, selectedPath, onSelect }: CitySceneP
     const heights = heightsRef.current;
     const slots: TerrainSlot[] = [];
     const present = new Set<number>();
+    // static map mode: no session drives attention, so raise every column by
+    // its lines of code instead of leaving the terrain flat
+    const maxLog = locHeights
+      ? Math.log2(Math.max(1, city.files.reduce((m, f) => Math.max(m, f.lines), 1)))
+      : 0;
     for (const file of city.files) {
       const touch = playback.touchByFile.get(file.id);
       const selected = file.path === selectedPath;
@@ -471,6 +520,13 @@ export function CityScene({ city, playback, selectedPath, onSelect }: CitySceneP
         if (file.ghost) color = color.clone().lerp(colors.ghost, 0.45);
         if (selected) color = colors.selected;
         slots.push({ fileId: file.id, target: attentionHeight(touch, visits), color });
+        present.add(file.id);
+      } else if (locHeights) {
+        const t = locFraction(file.lines, maxLog);
+        let color = locColor(t);
+        if (file.ghost) color = color.lerp(colors.ghost, 0.45);
+        if (selected) color = colors.selected;
+        slots.push({ fileId: file.id, target: locHeight(t), color });
         present.add(file.id);
       }
     }
@@ -488,7 +544,7 @@ export function CityScene({ city, playback, selectedPath, onSelect }: CitySceneP
     if (terrain.instanceColor) terrain.instanceColor.needsUpdate = true;
     if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
     slotsRef.current = slots;
-  }, [city, playback, selectedPath]);
+  }, [city, playback, selectedPath, locHeights]);
 
   // the inspector opens over the right edge; pan the selected tile clear of it
   useEffect(() => {

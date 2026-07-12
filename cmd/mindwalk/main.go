@@ -31,6 +31,8 @@ func run(args []string) error {
 		return serve(args[1:])
 	case "open":
 		return open(args[1:])
+	case "map":
+		return openMap(args[1:])
 	case "build":
 		return build(args[1:])
 	case "trace":
@@ -73,6 +75,24 @@ func open(args []string) error {
 		return err
 	}
 	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, OpenSession: session}).Start(!*noOpen)
+}
+
+func openMap(args []string) error {
+	fs := flag.NewFlagSet("map", flag.ExitOnError)
+	port := fs.Int("port", 0, "port to bind on 127.0.0.1")
+	dev := fs.Bool("dev", false, "prefer web/dist from the working tree")
+	noOpen := fs.Bool("no-open", false, "serve without opening a browser")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: mindwalk map [--no-open] <repo>")
+	}
+	repo, err := filepath.Abs(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	return server.New(server.Config{Port: *port, Dev: *dev, RepoRoot: repo, MapOnly: true}).Start(!*noOpen)
 }
 
 func build(args []string) error {
@@ -162,6 +182,7 @@ Usage:
   mindwalk                        serve on a random local port and open the UI
   mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR]
   mindwalk open [--no-open] <session.jsonl> open a specific Claude Code or Codex session
+  mindwalk map [--no-open] <repo>  open the repository citymap with no session
   mindwalk build <repo> [-o out]  write citymap.json
   mindwalk trace <session> [-o out] write trace.json`)
 }
