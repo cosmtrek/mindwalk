@@ -1,0 +1,100 @@
+=== $ go version ===
+go version go1.25.12 linux/amd64
+--- exit=0 ---
+
+=== $ go env GOROOT GOPATH ===
+~/.local/go
+~/go
+--- exit=0 ---
+
+=== $ gofmt -l . ===
+--- exit=0 ---
+
+=== $ go test ./... ===
+ok  	github.com/cosmtrek/mindwalk/cmd/mindwalk	0.005s
+ok  	github.com/cosmtrek/mindwalk/internal/adapter	0.010s
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/claudecode	0.984s
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/codex	0.011s
+ok  	github.com/cosmtrek/mindwalk/internal/citymap	0.285s
+ok  	github.com/cosmtrek/mindwalk/internal/model	0.005s
+ok  	github.com/cosmtrek/mindwalk/internal/server	0.160s
+--- exit=0 ---
+
+=== $ make test ===
+go test ./...
+ok  	github.com/cosmtrek/mindwalk/cmd/mindwalk	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/adapter	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/claudecode	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/codex	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/citymap	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/model	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/server	(cached)
+npm --prefix web run build
+
+> mindwalk-web@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 1729 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                       2.24 kB │ gzip:   0.83 kB
+dist/assets/fraunces-vietnamese-standard-normal-Czevyj-6.woff2       19.70 kB
+dist/assets/schibsted-grotesk-latin-ext-wght-normal-hsMS0n0O.woff2   20.92 kB
+dist/assets/fraunces-vietnamese-standard-italic-DxWqP7Ku.woff2       22.13 kB
+dist/assets/schibsted-grotesk-latin-wght-normal-Bb8VGrTG.woff2       46.75 kB
+dist/assets/fraunces-latin-ext-standard-normal-CJcjJNj7.woff2        59.39 kB
+dist/assets/fraunces-latin-standard-normal-DihXLNYH.woff2            67.30 kB
+dist/assets/fraunces-latin-ext-standard-italic-CGbN9UgK.woff2        71.46 kB
+dist/assets/fraunces-latin-standard-italic-lSdLDfvT.woff2            81.52 kB
+dist/assets/index-BWLkBQ0C.css                                       23.17 kB │ gzip:   5.04 kB
+dist/assets/index-DbaRtpfH.js                                        67.47 kB │ gzip:  23.76 kB │ map:   264.35 kB
+dist/assets/react-CkQa1mN8.js                                       192.52 kB │ gzip:  60.30 kB │ map:   909.38 kB
+dist/assets/three-DnGjZfD1.js                                       533.50 kB │ gzip: 134.72 kB │ map: 2,825.67 kB
+✓ built in 3.49s
+--- exit=0 ---
+
+=== $ make build ===
+npm --prefix web run build
+
+> mindwalk-web@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 1729 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                       2.24 kB │ gzip:   0.83 kB
+dist/assets/fraunces-vietnamese-standard-normal-Czevyj-6.woff2       19.70 kB
+dist/assets/schibsted-grotesk-latin-ext-wght-normal-hsMS0n0O.woff2   20.92 kB
+dist/assets/fraunces-vietnamese-standard-italic-DxWqP7Ku.woff2       22.13 kB
+dist/assets/schibsted-grotesk-latin-wght-normal-Bb8VGrTG.woff2       46.75 kB
+dist/assets/fraunces-latin-ext-standard-normal-CJcjJNj7.woff2        59.39 kB
+dist/assets/fraunces-latin-standard-normal-DihXLNYH.woff2            67.30 kB
+dist/assets/fraunces-latin-ext-standard-italic-CGbN9UgK.woff2        71.46 kB
+dist/assets/fraunces-latin-standard-italic-lSdLDfvT.woff2            81.52 kB
+dist/assets/index-BWLkBQ0C.css                                       23.17 kB │ gzip:   5.04 kB
+dist/assets/index-DbaRtpfH.js                                        67.47 kB │ gzip:  23.76 kB │ map:   264.35 kB
+dist/assets/react-CkQa1mN8.js                                       192.52 kB │ gzip:  60.30 kB │ map:   909.38 kB
+dist/assets/three-DnGjZfD1.js                                       533.50 kB │ gzip: 134.72 kB │ map: 2,825.67 kB
+✓ built in 3.48s
+rm -rf internal/server/static/assets
+cp web/dist/index.html internal/server/static/index.html
+cp -R web/dist/assets internal/server/static/assets
+rm -f internal/server/static/assets/*.map
+mkdir -p bin
+go build -o bin/mindwalk ./cmd/mindwalk
+--- exit=0 ---
+
+=== $ git status --short ===
+?? THIRD_PARTY_NOTICES.md
+?? docs/
+--- exit=0 ---
+
+=== $ git diff --stat ===
+--- exit=0 ---
+
+=== $ git diff --check ===
+--- exit=0 ---

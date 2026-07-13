@@ -1,15 +1,16 @@
 import { AlertTriangle, X } from "lucide-react";
-import { touchWord, type CityFile, type Touch, type TraceEvent } from "../types";
+import { touchWord, type CityFile, type ObservableEvent, type Touch, type TraceEvent } from "../types";
 
 interface InspectorProps {
   file: CityFile;
   touch?: Touch;
   history: TraceEvent[];
+	provenance?: ObservableEvent;
   onClose: () => void;
   onJumpTo: (seq: number) => void;
 }
 
-export function Inspector({ file, touch, history, onClose, onJumpTo }: InspectorProps) {
+export function Inspector({ file, touch, history, provenance, onClose, onJumpTo }: InspectorProps) {
   const slash = file.path.lastIndexOf("/");
   const dir = slash >= 0 ? file.path.slice(0, slash + 1) : "";
   const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
@@ -46,6 +47,23 @@ export function Inspector({ file, touch, history, onClose, onJumpTo }: Inspector
           <dd>{file.bytes.toLocaleString()}</dd>
         </div>
       </dl>
+		<section className="provenance-card" data-testid="provenance-inspector">
+			<p className="eyebrow">Provenance</p>
+			{provenance ? (
+				<dl className="provenance-facts">
+					<div><dt>Event</dt><dd title={provenance.event.eventId}>{provenance.event.eventType}</dd></div>
+					<div><dt>Source</dt><dd>{provenance.event.provenance.sourceName || provenance.event.provenance.sourceType}</dd></div>
+					<div><dt>Quality</dt><dd>{provenance.event.provenance.quality}</dd></div>
+					<div><dt>Ledger</dt><dd>#{provenance.sequence}</dd></div>
+					{provenance.event.provenance.explanation ? (
+						<div className="provenance-explanation"><dt>Basis</dt><dd>{provenance.event.provenance.explanation}</dd></div>
+					) : null}
+					{provenance.event.redactedFields?.length ? (
+						<div className="provenance-explanation"><dt>Redacted</dt><dd>{provenance.event.redactedFields.join(", ")}</dd></div>
+					) : null}
+				</dl>
+			) : <p className="muted">UNAVAILABLE — no canonical event is associated with this file.</p>}
+		</section>
       <section>
         <p className="eyebrow">Visits · {history.length}</p>
         <div className="history-list">

@@ -511,8 +511,9 @@ func decodeOutput(payload responseItemPayload) (string, adapter.ToolResult, bool
 	}
 	output := adapter.ContentToString(payload.Output)
 	return payload.CallID, adapter.ToolResult{
-		Content: output,
-		IsError: commandOutputFailed(output),
+		Content:  output,
+		IsError:  commandOutputFailed(output),
+		Complete: true,
 	}, true
 }
 

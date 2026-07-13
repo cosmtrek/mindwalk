@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { CityMap, SessionMeta, Trace } from "../types";
 import { loadFilters, saveFilters } from "./filters";
 
-export type SceneView = "tree" | "terrain";
+export type SceneView = "tree" | "terrain" | "list";
 
 interface AppState {
   sessions: SessionMeta[];
@@ -23,6 +23,7 @@ interface AppState {
   setActiveSession: (key?: string) => void;
   setData: (trace: Trace, city: CityMap) => void;
   setCityOnly: (city: CityMap) => void;
+  setRepositoryMap: (city: CityMap) => void;
   setCurrentSeq: (seq: number) => void;
   setSelectedPath: (path?: string) => void;
   setLoading: (loading: boolean) => void;
@@ -60,6 +61,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setData: (trace, city) => set({ trace, city, currentSeq: Math.max(0, trace.events.length - 1) }),
   // static full-repo map: render the city with no session/trace attached
   setCityOnly: (city) => set({ city, trace: undefined, currentSeq: 0, selectedPath: undefined, mapOnly: true }),
+  setRepositoryMap: (city) =>
+    set({ city, trace: undefined, activeSessionKey: undefined, currentSeq: 0, selectedPath: undefined, mapOnly: false }),
   setCurrentSeq: (currentSeq) => set({ currentSeq }),
   setSelectedPath: (selectedPath) => set({ selectedPath }),
   setLoading: (loading) => set({ loading }),

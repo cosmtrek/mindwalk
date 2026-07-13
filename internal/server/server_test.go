@@ -14,6 +14,7 @@ import (
 
 	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/model"
+	"github.com/cosmtrek/mindwalk/internal/registry"
 )
 
 func TestTraceStillLoadsWhenSessionCwdIsMissing(t *testing.T) {
@@ -67,6 +68,14 @@ func TestTraceStillLoadsWhenSessionCwdIsMissing(t *testing.T) {
 	}
 	if len(snapshot.Trace.Events) != 1 || snapshot.City.Repo.Root != city.Repo.Root {
 		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
+func TestDefaultListenerIsLoopbackOnly(t *testing.T) {
+	for _, port := range []int{0, 8765} {
+		if got, want := listenAddress(port), "127.0.0.1:"+strconv.Itoa(port); got != want {
+			t.Fatalf("listen address = %q, want %q", got, want)
+		}
 	}
 }
 
@@ -204,6 +213,43 @@ func TestSessionsFreshBypassesListTTL(t *testing.T) {
 	fresh := requestSessions(t, s, "/api/sessions?fresh=1")
 	if len(fresh) != 2 {
 		t.Fatalf("fresh sessions = %d, want 2", len(fresh))
+	}
+}
+
+func TestRegistryOnlySessionsRequireExplicitRepository(t *testing.T) {
+	claudeDir := t.TempDir()
+	registeredRoot := t.TempDir()
+	otherRoot := t.TempDir()
+	writeServerSession(t, filepath.Join(claudeDir, "registered.jsonl"),
+		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"registered","cwd":`+quoteJSON(registeredRoot)+`,"message":{"role":"user","content":"hello"}}`,
+	)
+	writeServerSession(t, filepath.Join(claudeDir, "other.jsonl"),
+		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"other","cwd":`+quoteJSON(otherRoot)+`,"message":{"role":"user","content":"hello"}}`,
+	)
+	config := filepath.Join(t.TempDir(), "repos.json")
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: t.TempDir(), RegistryPath: config, RegistryOnly: true})
+	if sessions, err := s.listSessionsFresh(true); err != nil || len(sessions) != 0 {
+		t.Fatalf("empty registry sessions = %#v err=%v", sessions, err)
+	}
+	emptyResponse := httptest.NewRecorder()
+	s.handleSessions(emptyResponse, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if emptyResponse.Code != http.StatusOK || strings.TrimSpace(emptyResponse.Body.String()) != "[]" {
+		t.Fatalf("cached empty sessions must encode as []: %d %s", emptyResponse.Code, emptyResponse.Body.String())
+	}
+
+	reg, _ := registry.Load(config)
+	if _, err := reg.Add(registeredRoot, "registered"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := s.listSessionsFresh(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "registered" {
+		t.Fatalf("registry-filtered sessions = %#v", sessions)
 	}
 }
 
@@ -475,25 +521,18 @@ func TestRepoMapServesCitymapWithoutSession(t *testing.T) {
 	}
 }
 
-func TestRepoMapAcceptsRepoQueryParam(t *testing.T) {
+func TestRepoMapRejectsArbitraryQueryPath(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, "a.go"), []byte("package demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// No RepoRoot configured; the repo comes entirely from the query param.
+	// No RepoRoot is configured, so an arbitrary query path must be denied.
 	s := New(Config{})
 	resp := httptest.NewRecorder()
 	s.handleRepoMap(resp, httptest.NewRequest(http.MethodGet, "/api/repomap?repo="+url.QueryEscape(repoRoot), nil))
-	if resp.Code != http.StatusOK {
-		t.Fatalf("repomap status = %d body=%s", resp.Code, resp.Body.String())
-	}
-	var city model.CityMap
-	if err := json.Unmarshal(resp.Body.Bytes(), &city); err != nil {
-		t.Fatal(err)
-	}
-	if len(city.Files) != 1 {
-		t.Fatalf("city = %#v", city)
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("repomap status = %d, want 403; body=%s", resp.Code, resp.Body.String())
 	}
 }
 

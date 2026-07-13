@@ -1,6 +1,5 @@
-import { Map as MapIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
-import type { ActionCounts, CityMap, MetricObservability, Trace } from "../types";
+import type { ActionCounts, AgentProcess, CityMap, MetricObservability, Trace } from "../types";
 import type { SceneView } from "../state/store";
 
 export interface ChurnEntry {
@@ -17,11 +16,9 @@ interface HudProps {
   readNow: number;
   seenNow: number;
   churn: ChurnEntry[];
+	agents: AgentProcess[];
   onViewChange: (view: SceneView) => void;
   onSelectFile: (path: string) => void;
-  // opens the static full-repo map for a repo path in a new tab; omit the path
-  // to use the current session's repo (trace.session.cwd)
-  onOpenMap: (repo?: string) => void;
   // while a video export records, the view toggle is locked so switching scenes
   // can't tear down and replace the canvas the recorder is capturing
   locked?: boolean;
@@ -39,15 +36,12 @@ export const Hud = memo(function Hud({
   readNow,
   seenNow,
   churn,
+	agents,
   onViewChange,
   onSelectFile,
-  onOpenMap,
   locked = false
 }: HudProps) {
   const stats = trace?.stats;
-  const [mapOpen, setMapOpen] = useState(false);
-  const [mapPath, setMapPath] = useState("");
-  const sessionRepo = trace?.session.cwd;
   const readFinal = stats ? stats.fovea - stats.edited : 0;
   const unvisitedNow = stats ? Math.max(0, stats.filesInRepo - editedNow - readNow - seenNow) : 0;
   const unvisitedFinal = stats ? Math.max(0, stats.filesInRepo - stats.fovea - stats.parafovea) : 0;
@@ -161,6 +155,12 @@ export const Hud = memo(function Hud({
               <span data-hint="Tool output the agent consumed over the session">
                 {fmtBytes(stats.resultBytes)} output
               </span>
+							<span
+								data-testid="agent-summary"
+								data-hint="Observed process records only. Lifecycle is UNKNOWN and controls are unavailable unless a future controlled adapter proves otherwise."
+							>
+								{agents.length} process{agents.length === 1 ? "" : "es"} · display only
+							</span>
               <span data-hint={rereadHint(stats.observability.reads)}>
                 {stats.observability.reads === "unavailable"
                   ? "re-reads n/a"
@@ -260,49 +260,18 @@ export const Hud = memo(function Hud({
             >
               Terrain
             </button>
-          </div>
-          <div className="map-controls">
-            <button
-              className="map-btn"
-              onClick={() => setMapOpen((open) => !open)}
-              aria-expanded={mapOpen}
-              data-hint="Open a static full-repo map — this session's repo, or any repo path"
-            >
-              <MapIcon size={13} />
-              <span>Map</span>
-            </button>
-            {mapOpen ? (
-              <div className="map-menu">
-                {sessionRepo ? (
-                  <button className="map-menu-row" onClick={() => onOpenMap(sessionRepo)} title={sessionRepo}>
-                    This session's repo
-                  </button>
-                ) : null}
-                <form
-                  className="map-menu-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const path = mapPath.trim();
-                    if (path) onOpenMap(path);
-                  }}
-                >
-                  <input
-                    type="text"
-                    className="map-menu-input"
-                    placeholder="/path/to/repo"
-                    value={mapPath}
-                    onChange={(e) => setMapPath(e.currentTarget.value)}
-                    spellCheck={false}
-                  />
-                  <button type="submit" className="map-menu-go" disabled={mapPath.trim() === ""}>
-                    Open
-                  </button>
-                </form>
-              </div>
-            ) : null}
+						<button
+							className={view === "list" ? "active" : ""}
+							onClick={() => onViewChange("list")}
+							disabled={locked}
+						>
+							List
+						</button>
           </div>
           <div className="encode-note">
-            {view === "tree"
+			{view === "list"
+				? "LOW · no WebGL"
+				: view === "tree"
               ? trace
                 ? "glow ∝ revisits"
                 : "static map"

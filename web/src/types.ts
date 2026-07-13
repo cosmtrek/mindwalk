@@ -30,6 +30,229 @@ export interface SessionMeta {
   eventCount: number;
 }
 
+export interface Repository {
+  id: string;
+  name: string;
+  path: string;
+  group?: string;
+  tags?: string[];
+  color?: string;
+  enabled: boolean;
+  addedAt: string;
+}
+
+export interface RepositoryStatus {
+  repo: Repository;
+  missing: boolean;
+  invalidPath?: boolean;
+  error?: string;
+  git: {
+    isGit: boolean;
+    root?: string;
+    branch?: string;
+    commit?: string;
+    dirty: boolean;
+    remote?: string;
+    worktrees?: { path: string; branch?: string }[];
+  };
+}
+
+export type RepositoryScanState =
+  | "idle"
+  | "running"
+  | "completed"
+  | "cancelled"
+  | "failed"
+  | "bounded"
+  | "timed_out";
+export type DiscoveredRepositoryType = "repository" | "worktree" | "bare" | "broken";
+export type RepositoryCleanState = "clean" | "dirty" | "unknown";
+export type RepositoryAccessibility = "accessible" | "inaccessible" | "invalid";
+
+export interface DiscoveryExclusion {
+  id: string;
+  label: string;
+  path?: string;
+  basename?: string;
+  locked: boolean;
+}
+
+export interface DiscoverySummary {
+  directoriesExamined: number;
+  repositoriesFound: number;
+  repositoriesSkipped: number;
+  permissionErrors: number;
+  elapsedMillis: number;
+}
+
+/** Owner-controlled repository scan preferences. The server remains the
+ * authority for canonical roots, critical exclusions, and safe bounds. */
+export interface RepositoryDiscoveryConfig {
+  approvedRoots: string[];
+  customExclusions: string[];
+  suggestedRoots?: string[];
+  homeRoot?: string;
+  exclusions: DiscoveryExclusion[];
+  options: {
+    maxDepth: number;
+    maxDirectories: number;
+    maxResults: number;
+    timeoutSeconds: number;
+    findNested: boolean;
+  };
+  lastScanAt?: string;
+  lastScanSummary?: DiscoverySummary;
+}
+
+export interface RepositoryDiscoveryStatus {
+  scanId?: string;
+  status: RepositoryScanState;
+  currentRoot?: string;
+  directoriesExamined: number;
+  repositoriesFound: number;
+  repositoriesSkipped: number;
+  permissionErrors: number;
+  elapsedMillis: number;
+  startedAt?: string;
+  finishedAt?: string;
+  limitReason?: string;
+  error?: string;
+}
+
+export interface DiscoveredRepository {
+  id: string;
+  name: string;
+  path: string;
+  type: DiscoveredRepositoryType;
+  branch?: string;
+  head?: string;
+  state: RepositoryCleanState;
+  worktreeOf?: string;
+  alreadyRegistered: boolean;
+  registeredRepositoryId?: string;
+  lastModified?: string;
+  accessible: boolean;
+  warnings: string[];
+  discoveryRoot: string;
+  hidden: boolean;
+}
+
+export interface DiscoveredRepositoryRegistration {
+  id: string;
+  name: string;
+  group: string;
+  tags: string[];
+  color: string;
+  enabled: boolean;
+}
+
+export interface DiscoveryRegistrationResult {
+  id: string;
+  status: "added" | "already_registered" | "failed";
+  repository?: RepositoryStatus;
+  error?: string;
+}
+
+export interface DiscoveryRegistrationResponse {
+  results: DiscoveryRegistrationResult[];
+}
+
+export interface EventProvenance {
+  sourceType: string;
+  sourceName?: string;
+  sourceEventId?: string;
+  rawEventHash?: string;
+  quality: "exact" | "estimated" | "derived" | "unavailable" | "redacted";
+  fieldQuality?: Record<string, string>;
+  confidence?: number;
+  explanation?: string;
+}
+
+export interface ObservableEvent {
+  sequence: number;
+  event: {
+    schemaVersion: number;
+    eventId: string;
+    eventType: string;
+    occurredAt: string;
+    observedAt: string;
+    seq: number;
+    repoId?: string;
+    sessionId?: string;
+    attrs?: Record<string, string>;
+    redactedFields?: string[];
+    provenance: EventProvenance;
+    normalizedEventHash: string;
+  };
+}
+
+export interface ObservableEventPage {
+  events: ObservableEvent[];
+  latestSequence: number;
+  truncated: boolean;
+}
+
+export interface AgentProcess {
+  schemaVersion: number;
+  id: string;
+  sessionId: string;
+  kind: string;
+  parentAgentId?: string;
+  relationshipQuality: string;
+  lifecycle: "UNKNOWN";
+  lifecycleQuality: string;
+  controlCapability: "DISPLAY_ONLY";
+  spawnObserved: boolean;
+  tools: string[];
+  files: string[];
+  errors: number;
+  verifications: number;
+  provenance: EventProvenance;
+}
+
+export interface MemoryRecord {
+  memoryId: string;
+  recordId: string;
+  namespace: string;
+  title: string;
+  body?: string;
+  updatedAt: string;
+  tombstoned: boolean;
+  provenance: EventProvenance;
+}
+
+export interface MemorySearchResult {
+  memory: MemoryRecord;
+  rank: number;
+}
+
+export interface SessionReview {
+  schemaVersion: number;
+  sessionId: string;
+  files: string[];
+  editedFiles: string[];
+  errors: number;
+  verifications: number;
+  churnFiles: string[];
+  scopeDriftTouches: number;
+  editsAfterLastVerify: number;
+  agentProcesses: number;
+  flags: string[];
+  provenance: EventProvenance;
+}
+
+export interface SessionComparison {
+  schemaVersion: number;
+  left: SessionReview;
+  right: SessionReview;
+  sharedFiles: string[];
+  onlyLeft: string[];
+  onlyRight: string[];
+  memoryStatus: "UNAVAILABLE";
+  memoryNote: string;
+  provenance: EventProvenance;
+}
+
 export interface Rect {
   x: number;
   z: number;

@@ -32,8 +32,9 @@ type ToolCall struct {
 }
 
 type ToolResult struct {
-	Content string
-	IsError bool
+	Content  string
+	IsError  bool
+	Complete bool
 }
 
 // SessionKey identifies one session file independently of the harness-level
@@ -83,6 +84,7 @@ func BuildEvent(trace *model.Trace, call ToolCall, result ToolResult) model.Even
 		ResultBytes: len(result.Content),
 		IsError:     result.IsError,
 		Summary:     SummarizeTool(call.Name, call.Input, targets, outside, result.IsError),
+		Complete:    result.Complete,
 	}
 }
 
