@@ -1,0 +1,188 @@
+=== $ gofmt -l . ===
+--- exit=0 ---
+
+=== $ go test ./internal/event/... -count=1 -v ===
+=== RUN   TestAllTypesValidAndUnique
+--- PASS: TestAllTypesValidAndUnique (0.00s)
+=== RUN   TestOptionalDistinguishableFromEmpty
+--- PASS: TestOptionalDistinguishableFromEmpty (0.00s)
+=== RUN   TestRawContentNeverRequired
+--- PASS: TestRawContentNeverRequired (0.00s)
+=== RUN   TestRedactedFieldsCarry
+--- PASS: TestRedactedFieldsCarry (0.00s)
+=== RUN   TestDerivedRequiresExplanation
+--- PASS: TestDerivedRequiresExplanation (0.00s)
+=== RUN   TestFinalizeDeterministic
+--- PASS: TestFinalizeDeterministic (0.00s)
+=== RUN   TestIdentityChangesWithContent
+--- PASS: TestIdentityChangesWithContent (0.00s)
+=== RUN   TestMapInsertionOrderIrrelevant
+--- PASS: TestMapInsertionOrderIrrelevant (0.00s)
+=== RUN   TestTimezoneSpellingIrrelevant
+--- PASS: TestTimezoneSpellingIrrelevant (0.00s)
+=== RUN   TestFinalizeIdempotent
+--- PASS: TestFinalizeIdempotent (0.00s)
+=== RUN   TestVerify
+--- PASS: TestVerify (0.00s)
+=== RUN   TestCanonicalJSONExcludesIdentity
+--- PASS: TestCanonicalJSONExcludesIdentity (0.00s)
+=== RUN   TestGoldenIdentity
+--- PASS: TestGoldenIdentity (0.00s)
+=== RUN   TestValidateRejections
+=== RUN   TestValidateRejections/wrong_schema_version
+=== RUN   TestValidateRejections/unknown_event_type
+=== RUN   TestValidateRejections/empty_occurredAt
+=== RUN   TestValidateRejections/garbage_occurredAt
+=== RUN   TestValidateRejections/non-UTC_observedAt
+=== RUN   TestValidateRejections/negative_sequence
+=== RUN   TestValidateRejections/malformed_eventId
+=== RUN   TestValidateRejections/malformed_normalized_hash
+=== RUN   TestValidateRejections/empty_attr_key
+=== RUN   TestValidateRejections/empty_redacted_field
+=== RUN   TestValidateRejections/missing_sourceType
+=== RUN   TestValidateRejections/unknown_quality
+=== RUN   TestValidateRejections/unknown_field_quality
+=== RUN   TestValidateRejections/confidence_out_of_range
+=== RUN   TestValidateRejections/derived_without_explanation
+=== RUN   TestValidateRejections/malformed_rawEventHash
+--- PASS: TestValidateRejections (0.00s)
+    --- PASS: TestValidateRejections/wrong_schema_version (0.00s)
+    --- PASS: TestValidateRejections/unknown_event_type (0.00s)
+    --- PASS: TestValidateRejections/empty_occurredAt (0.00s)
+    --- PASS: TestValidateRejections/garbage_occurredAt (0.00s)
+    --- PASS: TestValidateRejections/non-UTC_observedAt (0.00s)
+    --- PASS: TestValidateRejections/negative_sequence (0.00s)
+    --- PASS: TestValidateRejections/malformed_eventId (0.00s)
+    --- PASS: TestValidateRejections/malformed_normalized_hash (0.00s)
+    --- PASS: TestValidateRejections/empty_attr_key (0.00s)
+    --- PASS: TestValidateRejections/empty_redacted_field (0.00s)
+    --- PASS: TestValidateRejections/missing_sourceType (0.00s)
+    --- PASS: TestValidateRejections/unknown_quality (0.00s)
+    --- PASS: TestValidateRejections/unknown_field_quality (0.00s)
+    --- PASS: TestValidateRejections/confidence_out_of_range (0.00s)
+    --- PASS: TestValidateRejections/derived_without_explanation (0.00s)
+    --- PASS: TestValidateRejections/malformed_rawEventHash (0.00s)
+=== RUN   TestValidateAcceptsUnfinalizedAndFinalized
+--- PASS: TestValidateAcceptsUnfinalizedAndFinalized (0.00s)
+=== RUN   TestValidateErrorsAreClear
+--- PASS: TestValidateErrorsAreClear (0.00s)
+PASS
+ok  	github.com/cosmtrek/mindwalk/internal/event	0.003s
+--- exit=0 ---
+
+=== $ go test ./... -count=1 ===
+ok  	github.com/cosmtrek/mindwalk/cmd/mindwalk	0.004s
+ok  	github.com/cosmtrek/mindwalk/internal/adapter	0.007s
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/claudecode	0.670s
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/codex	0.008s
+ok  	github.com/cosmtrek/mindwalk/internal/citymap	0.224s
+ok  	github.com/cosmtrek/mindwalk/internal/event	0.005s
+ok  	github.com/cosmtrek/mindwalk/internal/model	0.003s
+ok  	github.com/cosmtrek/mindwalk/internal/server	0.123s
+--- exit=0 ---
+
+=== $ npm --prefix web run build ===
+
+> mindwalk-web@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 1729 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                       2.24 kB │ gzip:   0.83 kB
+dist/assets/fraunces-vietnamese-standard-normal-Czevyj-6.woff2       19.70 kB
+dist/assets/schibsted-grotesk-latin-ext-wght-normal-hsMS0n0O.woff2   20.92 kB
+dist/assets/fraunces-vietnamese-standard-italic-DxWqP7Ku.woff2       22.13 kB
+dist/assets/schibsted-grotesk-latin-wght-normal-Bb8VGrTG.woff2       46.75 kB
+dist/assets/fraunces-latin-ext-standard-normal-CJcjJNj7.woff2        59.39 kB
+dist/assets/fraunces-latin-standard-normal-DihXLNYH.woff2            67.30 kB
+dist/assets/fraunces-latin-ext-standard-italic-CGbN9UgK.woff2        71.46 kB
+dist/assets/fraunces-latin-standard-italic-lSdLDfvT.woff2            81.52 kB
+dist/assets/index-BWLkBQ0C.css                                       23.17 kB │ gzip:   5.04 kB
+dist/assets/index-DbaRtpfH.js                                        67.47 kB │ gzip:  23.76 kB │ map:   264.35 kB
+dist/assets/react-CkQa1mN8.js                                       192.52 kB │ gzip:  60.30 kB │ map:   909.38 kB
+dist/assets/three-DnGjZfD1.js                                       533.50 kB │ gzip: 134.72 kB │ map: 2,825.67 kB
+✓ built in 2.53s
+--- exit=0 ---
+
+=== $ make test ===
+go test ./...
+ok  	github.com/cosmtrek/mindwalk/cmd/mindwalk	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/adapter	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/claudecode	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/adapter/codex	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/citymap	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/event	0.003s
+ok  	github.com/cosmtrek/mindwalk/internal/model	(cached)
+ok  	github.com/cosmtrek/mindwalk/internal/server	(cached)
+npm --prefix web run build
+
+> mindwalk-web@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 1729 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                       2.24 kB │ gzip:   0.83 kB
+dist/assets/fraunces-vietnamese-standard-normal-Czevyj-6.woff2       19.70 kB
+dist/assets/schibsted-grotesk-latin-ext-wght-normal-hsMS0n0O.woff2   20.92 kB
+dist/assets/fraunces-vietnamese-standard-italic-DxWqP7Ku.woff2       22.13 kB
+dist/assets/schibsted-grotesk-latin-wght-normal-Bb8VGrTG.woff2       46.75 kB
+dist/assets/fraunces-latin-ext-standard-normal-CJcjJNj7.woff2        59.39 kB
+dist/assets/fraunces-latin-standard-normal-DihXLNYH.woff2            67.30 kB
+dist/assets/fraunces-latin-ext-standard-italic-CGbN9UgK.woff2        71.46 kB
+dist/assets/fraunces-latin-standard-italic-lSdLDfvT.woff2            81.52 kB
+dist/assets/index-BWLkBQ0C.css                                       23.17 kB │ gzip:   5.04 kB
+dist/assets/index-DbaRtpfH.js                                        67.47 kB │ gzip:  23.76 kB │ map:   264.35 kB
+dist/assets/react-CkQa1mN8.js                                       192.52 kB │ gzip:  60.30 kB │ map:   909.38 kB
+dist/assets/three-DnGjZfD1.js                                       533.50 kB │ gzip: 134.72 kB │ map: 2,825.67 kB
+✓ built in 2.47s
+--- exit=0 ---
+
+=== $ make build ===
+npm --prefix web run build
+
+> mindwalk-web@0.1.0 build
+> tsc -b && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 1729 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                       2.24 kB │ gzip:   0.83 kB
+dist/assets/fraunces-vietnamese-standard-normal-Czevyj-6.woff2       19.70 kB
+dist/assets/schibsted-grotesk-latin-ext-wght-normal-hsMS0n0O.woff2   20.92 kB
+dist/assets/fraunces-vietnamese-standard-italic-DxWqP7Ku.woff2       22.13 kB
+dist/assets/schibsted-grotesk-latin-wght-normal-Bb8VGrTG.woff2       46.75 kB
+dist/assets/fraunces-latin-ext-standard-normal-CJcjJNj7.woff2        59.39 kB
+dist/assets/fraunces-latin-standard-normal-DihXLNYH.woff2            67.30 kB
+dist/assets/fraunces-latin-ext-standard-italic-CGbN9UgK.woff2        71.46 kB
+dist/assets/fraunces-latin-standard-italic-lSdLDfvT.woff2            81.52 kB
+dist/assets/index-BWLkBQ0C.css                                       23.17 kB │ gzip:   5.04 kB
+dist/assets/index-DbaRtpfH.js                                        67.47 kB │ gzip:  23.76 kB │ map:   264.35 kB
+dist/assets/react-CkQa1mN8.js                                       192.52 kB │ gzip:  60.30 kB │ map:   909.38 kB
+dist/assets/three-DnGjZfD1.js                                       533.50 kB │ gzip: 134.72 kB │ map: 2,825.67 kB
+✓ built in 2.30s
+rm -rf internal/server/static/assets
+cp web/dist/index.html internal/server/static/index.html
+cp -R web/dist/assets internal/server/static/assets
+rm -f internal/server/static/assets/*.map
+mkdir -p bin
+go build -o bin/mindwalk ./cmd/mindwalk
+--- exit=0 ---
+
+=== $ git diff --check ===
+--- exit=0 ---
+
+=== $ git status --short ===
+?? THIRD_PARTY_NOTICES.md
+?? docs/
+?? internal/event/
+?? schema/event.schema.json
+?? schema/provenance.schema.json
+--- exit=0 ---

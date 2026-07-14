@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,40 +23,67 @@ import (
 	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
+	"github.com/cosmtrek/mindwalk/internal/agents"
+	"github.com/cosmtrek/mindwalk/internal/brain"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
+	"github.com/cosmtrek/mindwalk/internal/event"
+	"github.com/cosmtrek/mindwalk/internal/ingest"
+	"github.com/cosmtrek/mindwalk/internal/integration"
 	"github.com/cosmtrek/mindwalk/internal/model"
+	"github.com/cosmtrek/mindwalk/internal/product"
+	"github.com/cosmtrek/mindwalk/internal/redact"
+	"github.com/cosmtrek/mindwalk/internal/registry"
+	"github.com/cosmtrek/mindwalk/internal/review"
 )
 
 //go:embed static
 var embeddedStatic embed.FS
 
 type Config struct {
-	Port        int
-	ClaudeDir   string
-	CodexDir    string
-	OpenSession string
-	Dev         bool
-	RepoRoot    string
-	MapOnly     bool
+	Port         int
+	ClaudeDir    string
+	CodexDir     string
+	OpenSession  string
+	Dev          bool
+	RepoRoot     string
+	MapOnly      bool
+	RegistryPath string
+	// DataRoot contains the append-only observable-event ledger, resumable
+	// tail state, and metadata-only quarantine. Empty disables live ingestion
+	// for narrow open/map/test servers.
+	DataRoot string
+	// RegistryOnly limits normal Observatory session listing to enabled,
+	// explicitly registered repository roots. Explicit `mindwalk open` keeps
+	// the upstream single-session behavior by leaving this false.
+	RegistryOnly bool
 }
 
 type Server struct {
-	cfg       Config
-	adapters  []adapter.Source
-	mu        sync.Mutex
-	scanMu    sync.Mutex
-	sessions  []model.SessionMeta
-	sessionAt time.Time
-	freshGen  uint64
-	traces    map[string]*model.Trace
-	maps      map[string]*model.CityMap
-	cacheAt   map[string]time.Time
-	cacheUsed map[string]time.Time
-	cacheFile map[string]fileFingerprint
-	inflight  map[string]*inflightLoad
-	summaries map[string]summaryCacheEntry
-	repoMaps  map[string]repoMapEntry
-	repoMapMu sync.Mutex
+	cfg             Config
+	adapters        []adapter.Source
+	mu              sync.Mutex
+	scanMu          sync.Mutex
+	sessions        []model.SessionMeta
+	sessionAt       time.Time
+	freshGen        uint64
+	traces          map[string]*model.Trace
+	maps            map[string]*model.CityMap
+	cacheAt         map[string]time.Time
+	cacheUsed       map[string]time.Time
+	cacheFile       map[string]fileFingerprint
+	inflight        map[string]*inflightLoad
+	summaries       map[string]summaryCacheEntry
+	repoMaps        map[string]repoMapEntry
+	repoMapMu       sync.Mutex
+	registryMu      sync.Mutex
+	ingestion       *ingest.Manager
+	ingestionErr    error
+	brain           *brain.Store
+	brainErr        error
+	discovery       *discoveryManager
+	streamPoll      time.Duration
+	streamHeartbeat time.Duration
+	streamBatch     int
 }
 
 type repoMapEntry struct {
@@ -93,32 +121,66 @@ const (
 )
 
 func New(cfg Config) *Server {
-	return &Server{
-		cfg:       cfg,
-		adapters:  []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}},
-		traces:    map[string]*model.Trace{},
-		maps:      map[string]*model.CityMap{},
-		cacheAt:   map[string]time.Time{},
-		cacheUsed: map[string]time.Time{},
-		cacheFile: map[string]fileFingerprint{},
-		inflight:  map[string]*inflightLoad{},
-		summaries: map[string]summaryCacheEntry{},
-		repoMaps:  map[string]repoMapEntry{},
+	if cfg.RegistryPath == "" {
+		cfg.RegistryPath, _ = registry.DefaultPath(product.DirName)
 	}
+	s := &Server{
+		cfg:             cfg,
+		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}},
+		traces:          map[string]*model.Trace{},
+		maps:            map[string]*model.CityMap{},
+		cacheAt:         map[string]time.Time{},
+		cacheUsed:       map[string]time.Time{},
+		cacheFile:       map[string]fileFingerprint{},
+		inflight:        map[string]*inflightLoad{},
+		summaries:       map[string]summaryCacheEntry{},
+		repoMaps:        map[string]repoMapEntry{},
+		streamPoll:      750 * time.Millisecond,
+		streamHeartbeat: 15 * time.Second,
+		streamBatch:     256,
+	}
+	if cfg.DataRoot != "" {
+		s.ingestion, s.ingestionErr = ingest.NewManager(ingest.ManagerConfig{
+			Sources:      s.adapters,
+			RegistryPath: cfg.RegistryPath,
+			DataRoot:     cfg.DataRoot,
+		})
+		s.brain, s.brainErr = brain.Open(filepath.Join(cfg.DataRoot, "brain"))
+	}
+	s.discovery = newDiscoveryManager(cfg.RegistryPath, cfg.DataRoot)
+	return s
+}
+
+// DefaultDataRoot returns the local per-user directory for durable
+// Observatory state. Session sources and repository contents never live here.
+func DefaultDataRoot() (string, error) {
+	if base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); base != "" {
+		return filepath.Join(base, product.DirName), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share", product.DirName), nil
 }
 
 func (s *Server) Start(openBrowser bool) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/sessions", s.handleSessions)
-	mux.HandleFunc("/api/sessions/", s.handleSessionResource)
-	mux.HandleFunc("/api/repomap", s.handleRepoMap)
-	mux.HandleFunc("/", s.handleStatic)
+	stopIngestion := make(chan struct{})
+	if s.ingestion != nil {
+		_ = s.ingestion.PollAll()
+		go s.pollIngestion(stopIngestion)
+		defer func() {
+			close(stopIngestion)
+			_ = s.ingestion.Close()
+		}()
+	}
+	mux := s.Handler()
 
 	port := s.cfg.Port
 	if port == 0 {
 		port = 0
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	ln, err := net.Listen("tcp", listenAddress(port))
 	if err != nil {
 		return err
 	}
@@ -141,6 +203,60 @@ func (s *Server) Start(openBrowser bool) error {
 	}
 	fmt.Printf("mindwalk serving %s\n", addr)
 	return http.Serve(ln, mux)
+}
+
+func listenAddress(port int) string { return fmt.Sprintf("127.0.0.1:%d", port) }
+
+func (s *Server) pollIngestion(stop <-chan struct{}) {
+	ticker := time.NewTicker(s.streamPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			_ = s.ingestion.PollAll()
+		}
+	}
+}
+
+// Handler returns the complete localhost application handler. Keeping route
+// construction separate from Start makes API and security behavior testable
+// without opening a real listener.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/sessions", s.handleSessions)
+	mux.HandleFunc("/api/sessions/", s.handleSessionResource)
+	mux.HandleFunc("/api/sources", s.handleSources)
+	mux.HandleFunc("/api/ingestion/health", s.handleIngestionHealth)
+	mux.HandleFunc("/api/ingestion/sessions", s.handleIngestionSessions)
+	mux.HandleFunc("/api/quarantine", s.handleQuarantine)
+	mux.HandleFunc("/api/events/", s.handleEventResource)
+	mux.HandleFunc("/api/memories/search", s.handleMemorySearch)
+	mux.HandleFunc("/api/memories", s.handleMemories)
+	mux.HandleFunc("/api/memories/", s.handleMemoryResource)
+	mux.HandleFunc("/api/compare", s.handleComparison)
+	mux.HandleFunc("/api/integrations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeJSON(w, integration.Catalog())
+	})
+	mux.HandleFunc("/api/repomap", s.handleRepoMap)
+	mux.HandleFunc("/api/repositories", s.handleRepositories)
+	mux.HandleFunc("/api/repositories/", s.handleRepositoryResource)
+	mux.HandleFunc("/api/repository-discovery/config", s.handleDiscoveryConfig)
+	mux.HandleFunc("/api/repository-discovery/start", s.handleDiscoveryStart)
+	mux.HandleFunc("/api/repository-discovery/status", s.handleDiscoveryStatus)
+	mux.HandleFunc("/api/repository-discovery/cancel", s.handleDiscoveryCancel)
+	mux.HandleFunc("/api/repository-discovery/results", s.handleDiscoveryResults)
+	mux.HandleFunc("/api/repository-discovery/hide", s.handleDiscoveryHide)
+	mux.HandleFunc("/api/repository-discovery/register", s.handleDiscoveryRegister)
+	mux.HandleFunc("/api/repository-discovery/forget", s.handleDiscoveryForget)
+	mux.HandleFunc("/api/repository-discovery/reset-exclusions", s.handleDiscoveryResetExclusions)
+	mux.HandleFunc("/", s.handleStatic)
+	return securityHeaders(mux)
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -188,9 +304,286 @@ func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, city)
+	case "stream":
+		s.handleSessionStream(w, r, selector)
+	case "events":
+		s.handleSessionEvents(w, r, selector)
+	case "projection":
+		s.handleSessionProjection(w, r, selector)
+	case "agents":
+		s.handleSessionAgents(w, r, selector)
+	case "review":
+		s.handleSessionReview(w, r, selector)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *Server) handleSessionStream(w http.ResponseWriter, r *http.Request, selector string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	meta, err := s.findSession(selector)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if s.ingestion == nil {
+		http.Error(w, "durable live ingestion is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	cursor, _ := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
+	poll := time.NewTicker(s.streamPoll)
+	heartbeat := time.NewTicker(s.streamHeartbeat)
+	defer poll.Stop()
+	defer heartbeat.Stop()
+
+	sendEvents := func() bool {
+		items, latest, truncated, err := s.ingestion.EventsAfter(cursor, meta.Key, s.streamBatch)
+		if err != nil {
+			fmt.Fprint(w, "event: status\ndata: {\"status\":\"disconnected\"}\n\n")
+			flusher.Flush()
+			return false
+		}
+		for _, item := range items {
+			data, err := json.Marshal(item)
+			if err != nil {
+				return false
+			}
+			fmt.Fprintf(w, "id: %d\nevent: observable\ndata: %s\n\n", item.Sequence, data)
+			cursor = item.Sequence
+		}
+		if truncated {
+			fmt.Fprintf(w, "event: status\ndata: {\"status\":\"replay-bounded\",\"nextSequence\":%d}\n\n", cursor)
+			flusher.Flush()
+			return false
+		}
+		if latest > cursor {
+			fmt.Fprintf(w, "id: %d\nevent: checkpoint\ndata: {\"sequence\":%d}\n\n", latest, latest)
+			cursor = latest
+		}
+		flusher.Flush()
+		return true
+	}
+	if !sendEvents() {
+		return
+	}
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-poll.C:
+			if !sendEvents() {
+				return
+			}
+		case now := <-heartbeat.C:
+			fmt.Fprintf(w, ": heartbeat %s\n\n", now.UTC().Format(time.RFC3339))
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	writeJSON(w, s.ingestion.Sources())
+}
+
+func (s *Server) handleIngestionHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	writeJSON(w, s.ingestion.Health())
+}
+
+func (s *Server) handleIngestionSessions(w http.ResponseWriter, r *http.Request) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	writeJSON(w, s.ingestion.Sessions())
+}
+
+func (s *Server) handleQuarantine(w http.ResponseWriter, r *http.Request) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	health := s.ingestion.Health()
+	writeJSON(w, struct {
+		Count int64 `json:"count"`
+	}{Count: health.QuarantineCount})
+}
+
+func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, selector string) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	meta, err := s.findSession(selector)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 256
+	}
+	items, latest, truncated, err := s.ingestion.EventsAfter(after, meta.Key, limit)
+	if err != nil {
+		http.Error(w, "event ledger unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, struct {
+		Events    []ingest.StreamEvent `json:"events"`
+		Latest    int64                `json:"latestSequence"`
+		Truncated bool                 `json:"truncated"`
+	}{Events: items, Latest: latest, Truncated: truncated})
+}
+
+func (s *Server) handleSessionProjection(w http.ResponseWriter, r *http.Request, selector string) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	meta, err := s.findSession(selector)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	projection, err := s.ingestion.Projection(meta.Key)
+	if err != nil {
+		http.Error(w, "projection unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, projection)
+}
+
+func (s *Server) handleSessionAgents(w http.ResponseWriter, r *http.Request, selector string) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	meta, err := s.findSession(selector)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	processes, err := s.ingestion.AgentProcesses(meta.Key)
+	if err != nil {
+		http.Error(w, "agent projection unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, processes)
+}
+
+func (s *Server) handleSessionReview(w http.ResponseWriter, r *http.Request, selector string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	meta, err := s.findSession(selector)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	trace, _, err := s.traceAndMap(meta.Key)
+	if err != nil {
+		http.Error(w, "session trace unavailable", http.StatusNotFound)
+		return
+	}
+	var processes []agents.Process
+	if s.ingestion != nil {
+		processes, _ = s.ingestion.AgentProcesses(meta.Key)
+	}
+	packet := review.Analyze(trace, processes)
+	if r.URL.Query().Get("format") == "markdown" {
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="mindwalk-review.md"`)
+		_, _ = w.Write([]byte(review.Markdown(packet)))
+		return
+	}
+	writeJSON(w, packet)
+}
+
+func (s *Server) handleComparison(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	leftMeta, err := s.findSession(r.URL.Query().Get("left"))
+	if err != nil {
+		http.Error(w, "left session not found", http.StatusNotFound)
+		return
+	}
+	rightMeta, err := s.findSession(r.URL.Query().Get("right"))
+	if err != nil {
+		http.Error(w, "right session not found", http.StatusNotFound)
+		return
+	}
+	left, _, err := s.traceAndMap(leftMeta.Key)
+	if err != nil {
+		http.Error(w, "left session trace unavailable", http.StatusNotFound)
+		return
+	}
+	right, _, err := s.traceAndMap(rightMeta.Key)
+	if err != nil {
+		http.Error(w, "right session trace unavailable", http.StatusNotFound)
+		return
+	}
+	var leftAgents, rightAgents []agents.Process
+	if s.ingestion != nil {
+		leftAgents, _ = s.ingestion.AgentProcesses(leftMeta.Key)
+		rightAgents, _ = s.ingestion.AgentProcesses(rightMeta.Key)
+	}
+	writeJSON(w, review.Compare(left, right, leftAgents, rightAgents))
+}
+
+func (s *Server) handleEventResource(w http.ResponseWriter, r *http.Request) {
+	if !s.requireIngestionGET(w, r) {
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/events/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "provenance" {
+		http.NotFound(w, r)
+		return
+	}
+	events, err := s.ingestion.Events("")
+	if err != nil {
+		http.Error(w, "event ledger unavailable", http.StatusInternalServerError)
+		return
+	}
+	for _, envelope := range events {
+		if envelope.EventID == parts[0] {
+			writeJSON(w, struct {
+				EventID    string           `json:"eventId"`
+				EventType  string           `json:"eventType"`
+				Provenance event.Provenance `json:"provenance"`
+				Redactions []string         `json:"redactedFields,omitempty"`
+			}{EventID: envelope.EventID, EventType: envelope.EventType, Provenance: envelope.Provenance, Redactions: envelope.RedactedFields})
+			return
+		}
+	}
+	http.Error(w, "event not found", http.StatusNotFound)
+}
+
+func (s *Server) requireIngestionGET(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	if s.ingestionErr != nil || s.ingestion == nil {
+		http.Error(w, "durable live ingestion is unavailable", http.StatusServiceUnavailable)
+		return false
+	}
+	return true
 }
 
 // handleRepoMap serves the citymap for a repo with no session / trace attached.
@@ -207,9 +600,19 @@ func (s *Server) handleRepoMap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	repo := r.URL.Query().Get("repo")
-	if repo == "" {
-		repo = s.cfg.RepoRoot
+	repo := s.cfg.RepoRoot
+	requested := r.URL.Query().Get("repo")
+	if requested != "" && repo != "" {
+		requestedAbs, _ := filepath.Abs(requested)
+		rootAbs, _ := filepath.Abs(repo)
+		if requestedAbs != rootAbs {
+			http.Error(w, "repository path is not the configured map root", http.StatusForbidden)
+			return
+		}
+		repo = requestedAbs
+	} else if requested != "" {
+		http.Error(w, "arbitrary repository paths are disabled; use a registered repository", http.StatusForbidden)
+		return
 	}
 	if repo == "" {
 		http.Error(w, "no repo configured", http.StatusNotFound)
@@ -221,6 +624,16 @@ func (s *Server) handleRepoMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, city)
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) repoCityMap(repo string) (*model.CityMap, error) {
@@ -278,7 +691,10 @@ func (s *Server) listSessionsObserved(fresh bool, observedFreshGen uint64) ([]mo
 	defer s.scanMu.Unlock()
 	s.mu.Lock()
 	if s.sessions != nil && ((!fresh && time.Since(s.sessionAt) < sessionListTTL) || (fresh && s.freshGen != observedFreshGen)) {
-		sessions := append([]model.SessionMeta(nil), s.sessions...)
+		// Preserve an empty JSON array for the browser contract. Appending to a
+		// nil slice turns a cached empty result into JSON null, which makes the
+		// first-run UI treat sessions as a non-array and crash.
+		sessions := append([]model.SessionMeta{}, s.sessions...)
 		s.mu.Unlock()
 		return sessions, nil
 	}
@@ -318,6 +734,13 @@ func (s *Server) listSessionsObserved(fresh bool, observedFreshGen uint64) ([]mo
 }
 
 func (s *Server) scanSessions() ([]model.SessionMeta, error) {
+	allowed, err := s.allowedRepositoryRoots()
+	if err != nil {
+		return nil, err
+	}
+	if s.cfg.RegistryOnly && len(allowed) == 0 {
+		return []model.SessionMeta{}, nil
+	}
 	type sessionFile struct {
 		source adapter.Source
 		path   string
@@ -392,12 +815,47 @@ func (s *Server) scanSessions() ([]model.SessionMeta, error) {
 
 	sessions := make([]model.SessionMeta, 0, len(files))
 	for _, meta := range results {
-		if meta != nil && !meta.Auxiliary {
+		if meta != nil && !meta.Auxiliary && (!s.cfg.RegistryOnly || withinAllowedRoot(meta.Cwd, allowed)) {
 			sessions = append(sessions, *meta)
 		}
 	}
 	s.pruneSummaryCache(seen)
 	return sessions, nil
+}
+
+func (s *Server) allowedRepositoryRoots() ([]string, error) {
+	if !s.cfg.RegistryOnly {
+		return nil, nil
+	}
+	s.registryMu.Lock()
+	defer s.registryMu.Unlock()
+	reg, err := registry.Load(s.cfg.RegistryPath)
+	if err != nil {
+		return nil, err
+	}
+	var roots []string
+	for _, repo := range reg.List() {
+		if !repo.Enabled {
+			continue
+		}
+		status, err := reg.StatusOf(repo.ID)
+		if err == nil && !status.Missing && !status.InvalidPath {
+			roots = append(roots, repo.Path)
+		}
+	}
+	return roots, nil
+}
+
+func withinAllowedRoot(path string, roots []string) bool {
+	if path == "" {
+		return false
+	}
+	for _, root := range roots {
+		if registry.Within(root, path) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) summarizeAnyCached(path string, info fs.FileInfo) (model.SessionMeta, error) {
@@ -439,6 +897,7 @@ func (s *Server) summarizeCached(source adapter.Source, path string, info fs.Fil
 	if meta.Key == "" {
 		meta.Key = adapter.SessionKey(source.Harness(), path)
 	}
+	redact.SessionMeta(&meta)
 	s.mu.Lock()
 	s.summaries[key] = summaryCacheEntry{size: info.Size(), modTime: info.ModTime(), meta: meta}
 	s.mu.Unlock()
@@ -560,6 +1019,7 @@ func (s *Server) loadTraceAndMap(meta model.SessionMeta) (*model.Trace, *model.C
 	// Recompute with the citymap's file count, carrying over the adapter's
 	// grade for its error signal — the recount cannot re-derive it.
 	trace.Stats = model.ComputeStats(trace, repoFileCount(city), trace.Stats.Observability.Errors)
+	redact.Trace(trace)
 	return trace, city, nil
 }
 

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindwalk.local/schema/event.schema.json",
+  "title": "mindwalk observatory event envelope",
+  "description": "Canonical finalized event record. eventId and normalizedEventHash are derived deterministically from the envelope content (see internal/event). Envelopes carry metadata only, never raw source content.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "occurredAt",
+    "observedAt",
+    "seq",
+    "provenance",
+    "normalizedEventHash"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "eventId": { "type": "string", "pattern": "^ev1_[0-9a-f]{32}$" },
+    "eventType": {
+      "enum": [
+        "repo.discovered", "repo.changed", "repo.removed",
+        "session.started", "session.updated", "session.completed", "session.failed",
+        "agent.spawned", "agent.started", "agent.paused", "agent.resumed",
+        "agent.completed", "agent.failed", "agent.cancelled",
+        "model.request", "model.response", "model.error",
+        "tool.requested", "tool.started", "tool.completed", "tool.failed", "tool.blocked",
+        "file.searched", "file.read", "file.edited", "file.created", "file.deleted",
+        "command.started", "command.completed",
+        "verify.started", "verify.completed",
+        "git.status", "git.diff_observed", "git.commit_observed", "git.pr_observed",
+        "memory.search", "memory.read", "memory.proposed_write", "memory.write",
+        "memory.corrected", "memory.deleted",
+        "approval.requested", "approval.approved", "approval.denied", "approval.expired",
+        "security.redaction", "security.policy_block", "security.alert",
+        "context.compacted", "user.message", "system.heartbeat"
+      ]
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "repoId": { "type": "string" },
+    "sessionId": { "type": "string" },
+    "agentId": { "type": "string" },
+    "parentAgentId": { "type": "string" },
+    "parentEventId": { "type": "string" },
+    "attrs": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "type": "string" }
+    },
+    "redactedFields": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "provenance": { "$ref": "https://mindwalk.local/schema/provenance.schema.json" },
+    "normalizedEventHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

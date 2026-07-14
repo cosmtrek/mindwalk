@@ -77,6 +77,10 @@ type Event struct {
 	ResultBytes int            `json:"resultBytes"`
 	IsError     bool           `json:"isError"`
 	Summary     string         `json:"summary"`
+	// Complete is internal adapter state. It prevents live ingestion from
+	// publishing a completed event before the matching tool result arrives;
+	// the existing trace wire contract deliberately remains unchanged.
+	Complete bool `json:"-"`
 }
 
 type Target struct {

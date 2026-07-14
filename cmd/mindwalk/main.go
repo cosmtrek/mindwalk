@@ -12,6 +12,7 @@ import (
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
 	"github.com/cosmtrek/mindwalk/internal/model"
+	"github.com/cosmtrek/mindwalk/internal/redact"
 	"github.com/cosmtrek/mindwalk/internal/server"
 )
 
@@ -37,6 +38,10 @@ func run(args []string) error {
 		return build(args[1:])
 	case "trace":
 		return trace(args[1:])
+	case "repos":
+		return reposCmd(args[1:])
+	case "memory":
+		return memoryCmd(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return nil
@@ -52,10 +57,19 @@ func serve(args []string) error {
 	codexDir := fs.String("codex-dir", codex.DefaultDir(), "Codex sessions directory")
 	dev := fs.Bool("dev", false, "prefer web/dist from the working tree")
 	noOpen := fs.Bool("no-open", false, "serve without opening a browser")
+	config := fs.String("config", "", "repository registry file (defaults to the user config directory)")
+	dataDir := fs.String("data-dir", "", "durable Observatory data directory (defaults to the user data directory)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, Dev: *dev}).Start(!*noOpen)
+	if *dataDir == "" {
+		var err error
+		*dataDir, err = server.DefaultDataRoot()
+		if err != nil {
+			return err
+		}
+	}
+	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, Dev: *dev, RegistryPath: *config, DataRoot: *dataDir, RegistryOnly: true}).Start(!*noOpen)
 }
 
 func open(args []string) error {
@@ -130,6 +144,7 @@ func parseTrace(path string) (*model.Trace, error) {
 	for _, source := range []adapter.Source{claudecode.Adapter{}, codex.Adapter{}} {
 		trace, err := source.Parse(path)
 		if err == nil {
+			redact.Trace(trace)
 			return trace, nil
 		}
 		lastErr = err
@@ -180,9 +195,17 @@ func usage() {
 
 Usage:
   mindwalk                        serve on a random local port and open the UI
-  mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR]
+  mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR] [--data-dir DIR]
   mindwalk open [--no-open] <session.jsonl> open a specific Claude Code or Codex session
   mindwalk map [--no-open] <repo>  open the repository citymap with no session
   mindwalk build <repo> [-o out]  write citymap.json
-  mindwalk trace <session> [-o out] write trace.json`)
+  mindwalk trace <session> [-o out] write trace.json
+  mindwalk repos [list|add|show|remove|enable|disable|edit|validate|refresh]
+                                      manage registered repositories`)
+	fmt.Println(`  mindwalk repos discover [--root PATH]... [--home]
+  mindwalk repos [discover-status|discover-cancel|discovered]
+  mindwalk repos [add-discovered|hide-discovered|unhide-discovered] <id>...
+                                      preview and approve repository discovery`)
+	fmt.Println(`  mindwalk memory [list|add|search|correct|tombstone]
+                                      manage the explicit local second brain`)
 }

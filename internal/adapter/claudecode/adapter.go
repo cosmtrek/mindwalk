@@ -331,7 +331,8 @@ func isClaudeLine(line rawLine) bool {
 
 func buildEvent(trace *model.Trace, call adapter.ToolCall, result contentItem) model.Event {
 	return adapter.BuildEvent(trace, call, adapter.ToolResult{
-		Content: adapter.ContentToString(result.Content),
-		IsError: result.IsError,
+		Content:  adapter.ContentToString(result.Content),
+		IsError:  result.IsError,
+		Complete: result.Type == "tool_result",
 	})
 }

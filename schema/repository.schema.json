@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindwalk.local/schema/repository.schema.json",
+  "title": "mindwalk observatory repository status",
+  "type": "object",
+  "required": ["repo", "missing", "git"],
+  "additionalProperties": false,
+  "properties": {
+    "repo": {
+      "type": "object",
+      "required": ["id", "name", "path", "enabled", "addedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^repo_[0-9a-f]{12}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "group": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "color": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "addedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "missing": { "type": "boolean" },
+    "invalidPath": { "type": "boolean" },
+    "error": { "type": "string" },
+    "git": {
+      "type": "object",
+      "required": ["isGit", "dirty"],
+      "additionalProperties": true,
+      "properties": {
+        "isGit": { "type": "boolean" },
+        "root": { "type": "string" },
+        "branch": { "type": "string" },
+        "commit": { "type": "string" },
+        "dirty": { "type": "boolean" },
+        "remote": { "type": "string" },
+        "worktrees": { "type": "array" }
+      }
+    }
+  }
+}

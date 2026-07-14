@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindwalk.local/schema/agent-process.schema.json",
+  "title": "Mindwalk Observatory AgentProcess",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "id", "sessionId", "kind", "relationshipQuality",
+    "lifecycle", "lifecycleQuality", "controlCapability", "spawnObserved",
+    "tools", "files", "errors", "verifications", "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^agt_[0-9a-f]{24}$" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "kind": { "type": "string", "minLength": 1 },
+    "parentAgentId": { "type": "string", "pattern": "^agt_[0-9a-f]{24}$" },
+    "relationshipQuality": { "enum": ["exact", "estimated", "derived", "unavailable", "redacted"] },
+    "lifecycle": { "const": "UNKNOWN" },
+    "lifecycleQuality": { "const": "unavailable" },
+    "controlCapability": { "const": "DISPLAY_ONLY" },
+    "spawnObserved": { "type": "boolean" },
+    "tools": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "files": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "errors": { "type": "integer", "minimum": 0 },
+    "verifications": { "type": "integer", "minimum": 0 },
+    "provenance": { "$ref": "provenance.schema.json" }
+  }
+}

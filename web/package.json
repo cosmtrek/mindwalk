@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "test:e2e:live": "node e2e/live-ingestion.mjs",
+    "test:e2e:discovery": "node e2e/repository-discovery.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
