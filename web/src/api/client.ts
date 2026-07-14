@@ -42,3 +42,10 @@ export function getRepoMap(repo?: string): Promise<CityMap> {
   const url = repo ? `/api/repomap?repo=${encodeURIComponent(repo)}` : "/api/repomap";
   return getJSON<CityMap>(url);
 }
+
+// backs the git-history view: a synthetic session built from a repo's commit
+// history (one commit = one event), returned as a full trace+city snapshot.
+export function getHistory(repo?: string): Promise<{ trace: Trace; city: CityMap }> {
+  const url = repo ? `/api/history?repo=${encodeURIComponent(repo)}` : "/api/history";
+  return getJSON<{ trace: Trace; city: CityMap }>(url);
+}

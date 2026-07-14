@@ -18,11 +18,13 @@ interface AppState {
   harnessFilter?: string;
   railCollapsed: boolean;
   mapOnly: boolean;
+  historyMode: boolean;
   setView: (view: SceneView) => void;
   setSessions: (sessions: SessionMeta[]) => void;
   setActiveSession: (key?: string) => void;
   setData: (trace: Trace, city: CityMap) => void;
   setCityOnly: (city: CityMap) => void;
+  setHistory: (trace: Trace, city: CityMap) => void;
   setCurrentSeq: (seq: number) => void;
   setSelectedPath: (path?: string) => void;
   setLoading: (loading: boolean) => void;
@@ -53,6 +55,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   harnessFilter: initialFilters.harness,
   railCollapsed: loadRailCollapsed(),
   mapOnly: false,
+  historyMode: false,
   setView: (view) => set({ view }),
   setSessions: (sessions) => set({ sessions }),
   setActiveSession: (activeSessionKey) =>
@@ -60,6 +63,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setData: (trace, city) => set({ trace, city, currentSeq: Math.max(0, trace.events.length - 1) }),
   // static full-repo map: render the city with no session/trace attached
   setCityOnly: (city) => set({ city, trace: undefined, currentSeq: 0, selectedPath: undefined, mapOnly: true }),
+  // git history: a full trace+city synthetic session, replayed from commits.
+  // Start at the first commit (seq 0) so the repo grows as it plays, rather than
+  // opening at the end like a finished session.
+  setHistory: (trace, city) => set({ trace, city, currentSeq: 0, selectedPath: undefined, historyMode: true }),
   setCurrentSeq: (currentSeq) => set({ currentSeq }),
   setSelectedPath: (selectedPath) => set({ selectedPath }),
   setLoading: (loading) => set({ loading }),

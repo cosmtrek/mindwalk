@@ -1,4 +1,4 @@
-import { Map as MapIcon } from "lucide-react";
+import { GitCommitVertical, Map as MapIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type { ActionCounts, CityMap, MetricObservability, Trace } from "../types";
 import type { SceneView } from "../state/store";
@@ -22,6 +22,8 @@ interface HudProps {
   // opens the static full-repo map for a repo path in a new tab; omit the path
   // to use the current session's repo (trace.session.cwd)
   onOpenMap: (repo?: string) => void;
+  // opens the git-history replay for a repo path in a new tab
+  onOpenHistory: (repo?: string) => void;
   // while a video export records, the view toggle is locked so switching scenes
   // can't tear down and replace the canvas the recorder is capturing
   locked?: boolean;
@@ -42,6 +44,7 @@ export const Hud = memo(function Hud({
   onViewChange,
   onSelectFile,
   onOpenMap,
+  onOpenHistory,
   locked = false
 }: HudProps) {
   const stats = trace?.stats;
@@ -266,26 +269,30 @@ export const Hud = memo(function Hud({
               className="map-btn"
               onClick={() => setMapOpen((open) => !open)}
               aria-expanded={mapOpen}
-              data-hint="Open a static full-repo map — this session's repo, or any repo path"
+              data-hint="Open a static full-repo map or a git-history replay — this session's repo, or any repo path"
             >
               <MapIcon size={13} />
-              <span>Map</span>
+              <span>Explore</span>
             </button>
             {mapOpen ? (
               <div className="map-menu">
                 {sessionRepo ? (
-                  <button className="map-menu-row" onClick={() => onOpenMap(sessionRepo)} title={sessionRepo}>
-                    This session's repo
-                  </button>
+                  <div className="map-menu-group">
+                    <span className="map-menu-title" title={sessionRepo}>
+                      This session's repo
+                    </span>
+                    <div className="map-menu-actions">
+                      <button className="map-menu-row" onClick={() => onOpenMap(sessionRepo)}>
+                        <MapIcon size={12} /> Map
+                      </button>
+                      <button className="map-menu-row" onClick={() => onOpenHistory(sessionRepo)}>
+                        <GitCommitVertical size={12} /> History
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
-                <form
-                  className="map-menu-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const path = mapPath.trim();
-                    if (path) onOpenMap(path);
-                  }}
-                >
+                <div className="map-menu-group">
+                  <span className="map-menu-title">Any repository path</span>
                   <input
                     type="text"
                     className="map-menu-input"
@@ -294,10 +301,29 @@ export const Hud = memo(function Hud({
                     onChange={(e) => setMapPath(e.currentTarget.value)}
                     spellCheck={false}
                   />
-                  <button type="submit" className="map-menu-go" disabled={mapPath.trim() === ""}>
-                    Open
-                  </button>
-                </form>
+                  <div className="map-menu-actions">
+                    <button
+                      className="map-menu-row"
+                      disabled={mapPath.trim() === ""}
+                      onClick={() => {
+                        const p = mapPath.trim();
+                        if (p) onOpenMap(p);
+                      }}
+                    >
+                      <MapIcon size={12} /> Map
+                    </button>
+                    <button
+                      className="map-menu-row"
+                      disabled={mapPath.trim() === ""}
+                      onClick={() => {
+                        const p = mapPath.trim();
+                        if (p) onOpenHistory(p);
+                      }}
+                    >
+                      <GitCommitVertical size={12} /> History
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : null}
           </div>
