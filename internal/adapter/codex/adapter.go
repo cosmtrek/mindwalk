@@ -218,6 +218,9 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 				if _, exists := calls[call.ID]; exists {
 					return
 				}
+				if call.Name == "spawn_agent" {
+					trace.Marks = append(trace.Marks, model.Mark{Seq: len(callOrder), Type: "subagent", Note: call.Name})
+				}
 				calls[call.ID] = call
 				callOrder = append(callOrder, call.ID)
 				directPatches[call.ID] = source == "custom_tool_call" && call.Name == "apply_patch"

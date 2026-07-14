@@ -145,6 +145,36 @@ func TestParseCodexContextCompactedBecomesCompactionMark(t *testing.T) {
 	}
 }
 
+func TestParseCodexSpawnAgentBecomesSubagentMark(t *testing.T) {
+	dir := t.TempDir()
+	session := filepath.Join(dir, "rollout-2026-07-14T00-00-00-codex-subagent.jsonl")
+	writeJSONL(t, session,
+		map[string]any{
+			"timestamp": "2026-07-14T00:00:00Z",
+			"type":      "session_meta",
+			"payload":   map[string]any{"id": "codex-subagent", "timestamp": "2026-07-14T00:00:00Z"},
+		},
+		call("2026-07-14T00:00:01Z", "fc-1", "call-1", "exec_command", map[string]any{"cmd": "true"}),
+		output("2026-07-14T00:00:02Z", "call-1", "Process exited with code 0"),
+		call("2026-07-14T00:00:03Z", "fc-2", "call-2", "spawn_agent", map[string]any{
+			"task_name": "qa",
+			"message":   "Review the change",
+		}),
+		output("2026-07-14T00:00:04Z", "call-2", `{"agent_id":"agent-1"}`),
+	)
+
+	trace, err := Adapter{Dir: dir}.Parse(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.Marks) != 1 || trace.Marks[0].Type != "subagent" || trace.Marks[0].Seq != 1 || trace.Marks[0].Note != "spawn_agent" {
+		t.Fatalf("marks = %#v", trace.Marks)
+	}
+	if trace.Stats.Subagents != 1 {
+		t.Fatalf("subagents = %d", trace.Stats.Subagents)
+	}
+}
+
 func TestParseCodexCustomCallsCanonicalizesOrderAndPatchResults(t *testing.T) {
 	root := t.TempDir()
 	readme := filepath.Join(root, "README.md")
