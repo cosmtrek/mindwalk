@@ -1,4 +1,4 @@
-import type { CityMap, JudgeChoice, ReportStatus, SessionMeta, Trace } from "../types";
+import type { AgentGraph, CityMap, JudgeChoice, ReportStatus, SessionMeta, Trace } from "../types";
 
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -33,6 +33,16 @@ export function getCityMap(key: string): Promise<CityMap> {
 
 export function getSessionSnapshot(key: string): Promise<{ trace: Trace; city: CityMap }> {
   return getJSON<{ trace: Trace; city: CityMap }>(`/api/sessions/${encodeURIComponent(key)}/snapshot`);
+}
+
+export function getSessionAgents(rootKey: string): Promise<AgentGraph> {
+  return getJSON<AgentGraph>(`/api/sessions/${encodeURIComponent(rootKey)}/agents`);
+}
+
+export function getAgentTrace(rootKey: string, agentID: string): Promise<Trace> {
+  return getJSON<Trace>(
+    `/api/sessions/${encodeURIComponent(rootKey)}/agents/${encodeURIComponent(agentID)}/trace`
+  );
 }
 
 export function getSessionReport(key: string): Promise<ReportStatus> {

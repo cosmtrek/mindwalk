@@ -9,6 +9,7 @@ export interface ChurnEntry {
 interface HudProps {
   trace?: Trace;
   city?: CityMap;
+  agentLabel?: string;
   // live counts at the playhead, passed as primitives so memo stays effective
   editedNow: number;
   readNow: number;
@@ -24,6 +25,7 @@ const CHURN_PANEL_ROWS = 8;
 export const Hud = memo(function Hud({
   trace,
   city,
+  agentLabel,
   editedNow,
   readNow,
   seenNow,
@@ -66,7 +68,15 @@ export const Hud = memo(function Hud({
   return (
     <div className="hud" aria-hidden={!city}>
       <div className="hud-left">
-        <div className="hud-repo">{city ? basename(city.repo.root) : ""}</div>
+        <div className="hud-title-line">
+          <div className="hud-repo">{city ? basename(city.repo.root) : ""}</div>
+          {trace && agentLabel ? (
+            <div className="hud-lens">
+              <span>Lens</span>
+              {agentLabel}
+            </div>
+          ) : null}
+        </div>
         {city ? (
           <div className="hud-commit">
             <span>{city.repo.commit || "worktree"}</span>

@@ -34,6 +34,42 @@ export interface SessionMeta {
   reportState?: "running" | "done" | "stale" | "failed";
 }
 
+export type AgentKind = "main" | "subagent";
+export type AgentStatus = "main" | "launched" | "failed" | "unknown";
+export type TraceAvailability = "available" | "missing" | "unavailable";
+export type AgentLinkQuality = "exact" | "derived" | "unavailable";
+export type AgentLinkMethod =
+  | "root"
+  | "codex-agent-id"
+  | "codex-parent-thread-id"
+  | "claude-tool-use-id"
+  | "claude-subagents-directory"
+  | "unavailable";
+
+export interface AgentGraph {
+  version: number;
+  rootSessionKey: string;
+  agents: AgentNode[];
+}
+
+export interface AgentNode {
+  id: string;
+  parentId?: string;
+  depth: number;
+  kind: AgentKind;
+  label: string;
+  role?: string;
+  instructionPreview?: string;
+  launchSeq?: number;
+  launchCallId?: string;
+  status: AgentStatus;
+  traceAvailability: TraceAvailability;
+  traceSessionKey?: string;
+  traceEventCount: number;
+  linkQuality: AgentLinkQuality;
+  linkMethod: AgentLinkMethod;
+}
+
 export interface Rect {
   x: number;
   z: number;

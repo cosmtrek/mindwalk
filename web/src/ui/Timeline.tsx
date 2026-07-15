@@ -6,6 +6,7 @@ interface TimelineProps {
   trace?: Trace;
   currentSeq: number;
   onChange: (seq: number) => void;
+  onSubagentMark?: (seq: number) => void;
   onExport?: () => void;
   exporting?: boolean;
 }
@@ -40,7 +41,14 @@ const MARK_LABEL: Record<Mark["type"], string> = {
 
 const STRIP_ACTIONS: Action[] = ["search", "read", "edit", "verify", "exec"];
 
-export function Timeline({ trace, currentSeq, onChange, onExport, exporting = false }: TimelineProps) {
+export function Timeline({
+  trace,
+  currentSeq,
+  onChange,
+  onSubagentMark,
+  onExport,
+  exporting = false
+}: TimelineProps) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -251,14 +259,21 @@ export function Timeline({ trace, currentSeq, onChange, onExport, exporting = fa
     <footer className="deck">
       <div className="deck-main">
         <div className="strip">
-          <div className="strip-marks" aria-hidden>
+          <div className="strip-marks">
             {markGroups.map((group, i) => (
-              <span
+              <button
+                type="button"
                 key={`${group.type}-${group.seq}-${i}`}
                 className={`strip-mark ${group.type}`}
                 style={{ left: `${group.pos * 100}%` }}
+                disabled={locked}
                 title={`${group.note || MARK_LABEL[group.type]}${group.count > 1 ? ` ×${group.count}` : ""}`}
-                onClick={() => onChange(group.seq)}
+                aria-label={`Jump to ${group.note || MARK_LABEL[group.type]} at event ${group.seq + 1}${group.count > 1 ? `, ${group.count} marks` : ""}`}
+                onClick={() =>
+                  group.type === "subagent" && onSubagentMark
+                    ? onSubagentMark(group.seq)
+                    : onChange(group.seq)
+                }
               />
             ))}
           </div>
