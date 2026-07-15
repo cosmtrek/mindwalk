@@ -25,6 +25,10 @@ type Source interface {
 	Parse(path string) (*model.Trace, error)
 }
 
+type AgentGraphSource interface {
+	BuildAgentGraph(root model.SessionMeta, catalog []model.SessionMeta) (*model.AgentGraph, error)
+}
+
 type ToolCall struct {
 	ID        string
 	Name      string
@@ -47,6 +51,20 @@ func SessionKey(harness, path string) string {
 	path = filepath.Clean(path)
 	sum := sha256.Sum256([]byte(harness + "\x00" + path))
 	return fmt.Sprintf("%s-%x", harness, sum[:12])
+}
+
+func AgentNodeID(harness, rootSessionKey, actorIdentity string) string {
+	sum := sha256.Sum256([]byte(harness + "\x00" + rootSessionKey + "\x00" + actorIdentity))
+	return fmt.Sprintf("agt_%x", sum[:12])
+}
+
+func AgentInstructionPreview(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) <= 240 {
+		return text
+	}
+	return string(runes[:239]) + "…"
 }
 
 // userMessageNoteLimit bounds the text stored on user-message marks; the note

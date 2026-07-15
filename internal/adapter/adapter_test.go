@@ -4,12 +4,48 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/cosmtrek/mindwalk/internal/model"
 )
+
+func TestAgentNodeIDIsStableAndRootScoped(t *testing.T) {
+	got := AgentNodeID("codex", "root-key", "codex-agent:child")
+	if got != AgentNodeID("codex", "root-key", "codex-agent:child") {
+		t.Fatal("unstable")
+	}
+	if !regexp.MustCompile(`^agt_[0-9a-f]{24}$`).MatchString(got) {
+		t.Fatalf("id=%q", got)
+	}
+	if got == AgentNodeID("codex", "other-root", "codex-agent:child") {
+		t.Fatal("not root scoped")
+	}
+	if got == AgentNodeID("claude-code", "root-key", "codex-agent:child") {
+		t.Fatal("not harness scoped")
+	}
+}
+
+func TestAgentInstructionPreviewNormalizesAndTruncatesRunes(t *testing.T) {
+	if got := AgentInstructionPreview("  review\n\tthis   change  "); got != "review this change" {
+		t.Fatalf("normalized preview = %q", got)
+	}
+
+	exact := strings.Repeat("字", 240)
+	if got := AgentInstructionPreview(exact); got != exact {
+		t.Fatalf("preview at limit changed: %q", got)
+	}
+
+	got := AgentInstructionPreview(strings.Repeat("字", 241))
+	if len([]rune(got)) != 240 {
+		t.Fatalf("truncated preview is %d runes, want 240", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("truncated preview missing ellipsis: %q", got)
+	}
+}
 
 func TestSessionKeyIsStableAndSourceSpecific(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")

@@ -162,7 +162,8 @@ type SessionMeta struct {
 	// EventCount and UserTurns together are the cheap staleness signal for
 	// report badges: user messages land on marks, not events, so the count
 	// alone misses exactly the follow-ups that matter most.
-	EventCount int  `json:"eventCount"`
-	UserTurns  int  `json:"userTurns"`
-	Auxiliary  bool `json:"-"`
+	EventCount int               `json:"eventCount"`
+	UserTurns  int               `json:"userTurns"`
+	Auxiliary  bool              `json:"-"`
+	Agent      *AgentSessionMeta `json:"-"`
 }
