@@ -1983,6 +1983,11 @@ dd {
   background: var(--panel-raised);
 }
 
+.agents-retry:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .report-panel .report-meta {
   margin-top: 4px;
   color: var(--faint);

@@ -310,6 +310,7 @@ export default function App() {
   }, [saveActivePlayhead, setCurrentSeq, setData, setSelectedPath]);
 
   const selectAgent = useCallback(async (agentID: string | null) => {
+    if (exportingRef.current) return;
     const rootKey = activeSessionKeyRef.current;
     const nextCity = rootCityRef.current;
     if (!rootKey || !nextCity) return;
@@ -342,7 +343,8 @@ export default function App() {
         generation !== lensGeneration.current ||
         request !== agentTraceRequest.current ||
         pendingAgentIDRef.current !== agentID ||
-        activeSessionKeyRef.current !== rootKey
+        activeSessionKeyRef.current !== rootKey ||
+        exportingRef.current
       ) {
         return;
       }
@@ -373,7 +375,7 @@ export default function App() {
 
   const retryAgents = useCallback(() => {
     const key = activeSessionKeyRef.current;
-    if (!key || agentRetryID === undefined) return;
+    if (exportingRef.current || !key || agentRetryID === undefined) return;
     if (agentRetryID === null) void loadAgentGraph(key);
     else void selectAgent(agentRetryID);
   }, [agentRetryID, loadAgentGraph, selectAgent]);
@@ -381,13 +383,17 @@ export default function App() {
   const exportVideo = useCallback(async () => {
     const canvas = canvasRef.current;
     const total = trace?.events.length ?? 0;
-    if (!canvas || total === 0 || exporting) return;
+    if (!canvas || total === 0 || exportingRef.current) return;
     // the recorder owns the playhead for the duration of the export; setting
     // exporting=true locks the transport, scrubber, session rail, and view
     // toggle (see the `exporting` prop threaded into Timeline/SessionRail/Hud)
     // so nothing else moves the playhead or swaps the canvas mid-recording
     const exportSessionKey = activeSessionKeyRef.current;
     const resumeSeq = useAppStore.getState().currentSeq;
+    agentTraceRequest.current++;
+    pendingAgentIDRef.current = undefined;
+    setLoadingAgentID(undefined);
+    exportingRef.current = true;
     setExporting(true);
     setError(undefined);
     try {
@@ -406,6 +412,7 @@ export default function App() {
       if (activeSessionKeyRef.current === exportSessionKey) {
         setCurrentSeq(resumeSeq);
       }
+      exportingRef.current = false;
       setExporting(false);
     }
   }, [trace, exporting, setCurrentSeq, setError]);

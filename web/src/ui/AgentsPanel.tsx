@@ -90,7 +90,7 @@ export function AgentsPanel({
             <AlertTriangle size={14} aria-hidden />
             {error}
           </span>
-          <button className="agents-retry" onClick={onRetry}>
+          <button className="agents-retry" onClick={onRetry} disabled={locked}>
             <RefreshCw size={13} aria-hidden />
             Retry
           </button>
