@@ -1,6 +1,9 @@
 package judge
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestParseClaudeEnvelopePicksMainModel(t *testing.T) {
 	raw := `{"type":"result","result":"{\"ok\":true}","modelUsage":{
@@ -32,5 +35,12 @@ func TestCodexModelReadsPreamble(t *testing.T) {
 	}
 	if got := codexModel("no preamble at all"); got != "" {
 		t.Fatalf("expected empty model, got %q", got)
+	}
+}
+
+func TestCodexExecArgsExcludeRemovedFeatures(t *testing.T) {
+	args := codexExecArgs("/tmp/judge")
+	if slices.Contains(args, "browser_use_full_cdp_access") {
+		t.Fatal("codex args include removed browser_use_full_cdp_access feature")
 	}
 }
