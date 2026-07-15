@@ -84,9 +84,11 @@ type fileFingerprint struct {
 }
 
 type summaryCacheEntry struct {
-	size    int64
-	modTime time.Time
-	meta    model.SessionMeta
+	size          int64
+	modTime       time.Time
+	sidecar       fileFingerprint
+	sidecarExists bool
+	meta          model.SessionMeta
 }
 
 const (
@@ -463,8 +465,10 @@ func (s *Server) summarizeCached(source adapter.Source, path string, info fs.Fil
 		}
 	}
 	key := summaryKey(source, path)
+	sidecar, sidecarExists := summarySidecarFingerprint(source, path)
 	s.mu.Lock()
-	if cached, ok := s.summaries[key]; ok && cached.size == info.Size() && cached.modTime.Equal(info.ModTime()) {
+	if cached, ok := s.summaries[key]; ok && cached.size == info.Size() && cached.modTime.Equal(info.ModTime()) &&
+		cached.sidecarExists == sidecarExists && cached.sidecar.equal(sidecar) {
 		meta := cached.meta
 		s.mu.Unlock()
 		return meta, nil
@@ -479,9 +483,23 @@ func (s *Server) summarizeCached(source adapter.Source, path string, info fs.Fil
 		meta.Key = adapter.SessionKey(source.Harness(), path)
 	}
 	s.mu.Lock()
-	s.summaries[key] = summaryCacheEntry{size: info.Size(), modTime: info.ModTime(), meta: meta}
+	s.summaries[key] = summaryCacheEntry{
+		size:          info.Size(),
+		modTime:       info.ModTime(),
+		sidecar:       sidecar,
+		sidecarExists: sidecarExists,
+		meta:          meta,
+	}
 	s.mu.Unlock()
 	return meta, nil
+}
+
+func summarySidecarFingerprint(source adapter.Source, path string) (fileFingerprint, bool) {
+	if source.Harness() != "claude-code" || !strings.HasPrefix(filepath.Base(path), "agent-") {
+		return fileFingerprint{}, false
+	}
+	fingerprint, err := fingerprintFile(strings.TrimSuffix(path, ".jsonl") + ".meta.json")
+	return fingerprint, err == nil
 }
 
 func (s *Server) pruneSummaryCache(seen map[string]bool) {

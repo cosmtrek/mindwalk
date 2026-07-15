@@ -447,6 +447,38 @@ func TestServerRetainsClaudeSubagentInCatalog(t *testing.T) {
 	}
 }
 
+func TestFreshScanReloadsClaudeSidecarMetadata(t *testing.T) {
+	claudeDir := t.TempDir()
+	root := filepath.Join(claudeDir, "root-id.jsonl")
+	child := filepath.Join(claudeDir, "root-id", "subagents", "agent-child.jsonl")
+	if err := os.MkdirAll(filepath.Dir(child), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeServerSession(t, root,
+		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"root-id","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
+	)
+	writeServerSession(t, child,
+		`{"type":"user","timestamp":"2026-07-09T00:00:01Z","sessionId":"root-id","agentId":"child","isSidechain":true,"cwd":"/tmp","message":{"role":"user","content":"internal"}}`,
+	)
+
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	requestSessions(t, s, "/api/sessions")
+	childKey := adapter.SessionKey("claude-code", child)
+	if got := s.sessionCatalog[childKey].Agent.Role; got != "" {
+		t.Fatalf("initial role = %q, want empty", got)
+	}
+
+	sidecar := strings.TrimSuffix(child, ".jsonl") + ".meta.json"
+	if err := os.WriteFile(sidecar, []byte(`{"agentType":"Explore","description":"Inspect child","toolUseId":"call-child","spawnDepth":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requestSessions(t, s, "/api/sessions?fresh=1")
+	meta := s.sessionCatalog[childKey]
+	if meta.Agent == nil || meta.Agent.Role != "Explore" || meta.Agent.Depth != 2 || meta.Agent.LaunchCallID != "call-child" {
+		t.Fatalf("fresh child agent meta = %#v", meta.Agent)
+	}
+}
+
 func TestServerSkipsCodexSubagentSessions(t *testing.T) {
 	claudeDir := t.TempDir()
 	codexDir := t.TempDir()
