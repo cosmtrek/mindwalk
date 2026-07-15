@@ -50,7 +50,11 @@ func (a Adapter) BuildAgentGraph(root model.SessionMeta, catalog []model.Session
 	}
 
 	childrenByParent := make(map[string][]model.SessionMeta)
+	ambiguousRootID := false
 	for _, session := range catalog {
+		if session.Key != root.Key && session.Harness == a.Harness() && !session.Auxiliary && session.Agent == nil && session.ID == root.ID {
+			ambiguousRootID = true
+		}
 		if session.Agent == nil || session.Agent.ParentSessionID == "" {
 			continue
 		}
@@ -115,6 +119,9 @@ func (a Adapter) BuildAgentGraph(root model.SessionMeta, catalog []model.Session
 		for i := range children {
 			child := children[i]
 			if linkedChildren[child.Key] || visitedSessions[child.Key] {
+				continue
+			}
+			if actor.session.Key == root.Key && ambiguousRootID {
 				continue
 			}
 			node := derivedCodexAgentNode(a.Harness(), root.Key, actor, child)

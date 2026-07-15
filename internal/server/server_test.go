@@ -413,6 +413,112 @@ func TestServerLoadsCodexSessions(t *testing.T) {
 	}
 }
 
+func TestCodexAgentAPIsDoNotDeriveChildAcrossDuplicateRootIDs(t *testing.T) {
+	claudeDir := t.TempDir()
+	codexDir := t.TempDir()
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "main.go"), []byte("package demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rootAPath := filepath.Join(codexDir, "root-a.jsonl")
+	rootBPath := filepath.Join(codexDir, "root-b.jsonl")
+	childBPath := filepath.Join(codexDir, "child-b.jsonl")
+	rootMeta := func() map[string]any {
+		return map[string]any{
+			"type": "session_meta",
+			"payload": map[string]any{
+				"id":  "shared-root",
+				"cwd": filepath.ToSlash(repoRoot),
+			},
+		}
+	}
+	writeServerJSONL(t, rootAPath, rootMeta())
+	writeServerJSONL(t, rootBPath,
+		rootMeta(),
+		map[string]any{
+			"type": "response_item",
+			"payload": map[string]any{
+				"type":      "function_call",
+				"id":        "fc-child-b",
+				"name":      "spawn_agent",
+				"arguments": `{"message":"owned by root B"}`,
+				"call_id":   "call-child-b",
+			},
+		},
+		map[string]any{
+			"type": "response_item",
+			"payload": map[string]any{
+				"type":    "function_call_output",
+				"call_id": "call-child-b",
+				"output":  `{"agent_id":"child-b"}`,
+			},
+		},
+	)
+	writeServerJSONL(t, childBPath, map[string]any{
+		"type": "session_meta",
+		"payload": map[string]any{
+			"id":               "child-b",
+			"session_id":       "shared-root",
+			"parent_thread_id": "shared-root",
+			"cwd":              filepath.ToSlash(repoRoot),
+			"thread_source":    "subagent",
+			"source": map[string]any{
+				"subagent": map[string]any{
+					"thread_spawn": map[string]any{
+						"parent_thread_id": "shared-root",
+						"depth":            1,
+						"agent_nickname":   "Root B Child",
+					},
+				},
+			},
+		},
+	})
+
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir})
+	sessions := requestSessions(t, s, "/api/sessions")
+	if len(sessions) != 2 {
+		t.Fatalf("visible sessions = %#v, want duplicate-ID roots only", sessions)
+	}
+	rootAKey := adapter.SessionKey("codex", rootAPath)
+	rootBKey := adapter.SessionKey("codex", rootBPath)
+	childBKey := adapter.SessionKey("codex", childBPath)
+	rootBNodeID := adapter.AgentNodeID("codex", rootBKey, "codex-agent:child-b")
+
+	rootAGraphResp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/"+rootAKey+"/agents")
+	if rootAGraphResp.Code != http.StatusOK {
+		t.Fatalf("root A graph status=%d body=%q", rootAGraphResp.Code, rootAGraphResp.Body.String())
+	}
+	var rootAGraph model.AgentGraph
+	if err := json.Unmarshal(rootAGraphResp.Body.Bytes(), &rootAGraph); err != nil {
+		t.Fatal(err)
+	}
+	if len(rootAGraph.Agents) != 1 {
+		t.Fatalf("root A absorbed root B child: %#v", rootAGraph.Agents)
+	}
+
+	rootBGraphResp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/"+rootBKey+"/agents")
+	if rootBGraphResp.Code != http.StatusOK {
+		t.Fatalf("root B graph status=%d body=%q", rootBGraphResp.Code, rootBGraphResp.Body.String())
+	}
+	var rootBGraph model.AgentGraph
+	if err := json.Unmarshal(rootBGraphResp.Body.Bytes(), &rootBGraph); err != nil {
+		t.Fatal(err)
+	}
+	if len(rootBGraph.Agents) != 2 || rootBGraph.Agents[1].ID != rootBNodeID || rootBGraph.Agents[1].LinkQuality != model.AgentLinkQualityExact {
+		t.Fatalf("root B exact child = %#v", rootBGraph.Agents)
+	}
+
+	for _, nodeID := range []string{
+		rootBNodeID,
+		adapter.AgentNodeID("codex", rootAKey, "session:"+childBKey),
+	} {
+		traceResp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/"+rootAKey+"/agents/"+nodeID+"/trace")
+		if traceResp.Code != http.StatusNotFound || strings.TrimSpace(traceResp.Body.String()) != "agent not found" {
+			t.Fatalf("root A node %q status=%d body=%q", nodeID, traceResp.Code, traceResp.Body.String())
+		}
+	}
+}
+
 func TestServerRetainsClaudeSubagentInCatalog(t *testing.T) {
 	claudeDir := t.TempDir()
 	session := filepath.Join(claudeDir, "root-id.jsonl")
