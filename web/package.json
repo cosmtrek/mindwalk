@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",

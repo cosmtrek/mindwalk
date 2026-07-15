@@ -1,0 +1,350 @@
+{
+  "session": {
+    "key": "synthetic-root",
+    "id": "synthetic-root",
+    "harness": "codex",
+    "title": "Fictional lens walkthrough",
+    "path": "/fictional/sessions/root.jsonl",
+    "cwd": "/fictional/repos/moon-garden",
+    "model": "fictional-model",
+    "eventCount": 4
+  },
+  "city": {
+    "version": 1,
+    "repo": {
+      "root": "/fictional/repos/moon-garden",
+      "commit": "demo123",
+      "dirty": false,
+      "generatedAt": "2026-01-01T00:00:00Z"
+    },
+    "files": [
+      {
+        "id": 1,
+        "path": "src/moon.ts",
+        "dir": "src",
+        "lines": 20,
+        "bytes": 400,
+        "lang": "TypeScript",
+        "rect": { "x": 0, "z": 0, "w": 1, "d": 1 },
+        "ghost": false
+      },
+      {
+        "id": 2,
+        "path": "src/garden.ts",
+        "dir": "src",
+        "lines": 30,
+        "bytes": 600,
+        "lang": "TypeScript",
+        "rect": { "x": 2, "z": 0, "w": 1, "d": 1 },
+        "ghost": false
+      }
+    ],
+    "dirs": [
+      {
+        "path": "src",
+        "depth": 1,
+        "rect": { "x": 0, "z": 0, "w": 3, "d": 1 },
+        "fileCount": 2,
+        "lines": 50
+      }
+    ],
+    "layout": { "algorithm": "synthetic", "weight": "lines" }
+  },
+  "graph": {
+    "version": 1,
+    "rootSessionKey": "synthetic-root",
+    "agents": [
+      {
+        "id": "main",
+        "depth": 0,
+        "kind": "main",
+        "label": "Main",
+        "status": "main",
+        "traceAvailability": "available",
+        "traceSessionKey": "synthetic-root",
+        "traceEventCount": 4,
+        "linkQuality": "exact",
+        "linkMethod": "root"
+      },
+      {
+        "id": "child-a",
+        "parentId": "main",
+        "depth": 1,
+        "kind": "subagent",
+        "label": "Atlas",
+        "role": "explorer",
+        "instructionPreview": "Inspect the fictional moon module",
+        "launchSeq": 1,
+        "launchCallId": "fictional-call-a",
+        "status": "launched",
+        "traceAvailability": "available",
+        "traceSessionKey": "synthetic-child-a",
+        "traceEventCount": 2,
+        "linkQuality": "exact",
+        "linkMethod": "codex-agent-id"
+      },
+      {
+        "id": "child-b",
+        "parentId": "main",
+        "depth": 1,
+        "kind": "subagent",
+        "label": "Borealis",
+        "role": "reviewer",
+        "instructionPreview": "Review the fictional garden module",
+        "launchSeq": 2,
+        "launchCallId": "fictional-call-b",
+        "status": "launched",
+        "traceAvailability": "available",
+        "traceSessionKey": "synthetic-child-b",
+        "traceEventCount": 3,
+        "linkQuality": "exact",
+        "linkMethod": "codex-agent-id"
+      },
+      {
+        "id": "child-missing",
+        "parentId": "main",
+        "depth": 1,
+        "kind": "subagent",
+        "label": "Comet",
+        "launchSeq": 2,
+        "launchCallId": "fictional-call-missing",
+        "status": "launched",
+        "traceAvailability": "missing",
+        "traceEventCount": 0,
+        "linkQuality": "exact",
+        "linkMethod": "codex-agent-id"
+      },
+      {
+        "id": "child-failed",
+        "parentId": "main",
+        "depth": 1,
+        "kind": "subagent",
+        "label": "Drift",
+        "launchSeq": 3,
+        "launchCallId": "fictional-call-failed",
+        "status": "failed",
+        "traceAvailability": "unavailable",
+        "traceEventCount": 0,
+        "linkQuality": "unavailable",
+        "linkMethod": "unavailable"
+      }
+    ]
+  },
+  "traces": {
+    "root": {
+      "version": 1,
+      "session": {
+        "id": "synthetic-root",
+        "harness": "codex",
+        "model": "fictional-model",
+        "title": "Fictional lens walkthrough",
+        "cwd": "/fictional/repos/moon-garden",
+        "eventCount": 4,
+        "path": "/fictional/sessions/root.jsonl"
+      },
+      "events": [
+        {
+          "seq": 0,
+          "tool": "Search",
+          "action": "search",
+          "targets": [{ "path": "src/moon.ts", "fileId": 1, "touch": "hit" }],
+          "resultBytes": 10,
+          "isError": false,
+          "summary": "Search the fictional moon module"
+        },
+        {
+          "seq": 1,
+          "tool": "spawn_agent",
+          "action": "exec",
+          "targets": [],
+          "resultBytes": 12,
+          "isError": false,
+          "summary": "Launch a fictional helper"
+        },
+        {
+          "seq": 2,
+          "tool": "Edit",
+          "action": "edit",
+          "targets": [{ "path": "src/garden.ts", "fileId": 2, "touch": "edit" }],
+          "resultBytes": 14,
+          "isError": false,
+          "summary": "Edit the fictional garden module"
+        },
+        {
+          "seq": 3,
+          "tool": "Test",
+          "action": "verify",
+          "targets": [{ "path": "src/garden.ts", "fileId": 2, "touch": "read" }],
+          "resultBytes": 16,
+          "isError": false,
+          "summary": "Verify the fictional garden"
+        }
+      ],
+      "marks": [{ "seq": 1, "type": "subagent", "note": "fictional helper launch" }],
+      "stats": {
+        "filesInRepo": 2,
+        "fovea": 1,
+        "parafovea": 1,
+        "edited": 1,
+        "eventsBeforeFirstEdit": 2,
+        "regressionRate": 0,
+        "errorRate": 0,
+        "actions": { "search": 1, "read": 0, "edit": 1, "exec": 1, "verify": 1, "other": 0 },
+        "errors": { "search": 0, "read": 0, "edit": 0, "exec": 0, "verify": 0, "other": 0 },
+        "maxEditsPerFile": 1,
+        "churnFiles": 0,
+        "userTurns": 1,
+        "compactions": 0,
+        "subagents": 1,
+        "resultBytes": 52,
+        "editsAfterLastVerify": 0,
+        "observability": { "reads": "exact", "errors": "exact" }
+      }
+    },
+    "child-a": {
+      "version": 1,
+      "session": {
+        "id": "synthetic-child-a",
+        "harness": "codex",
+        "model": "fictional-model",
+        "title": "Atlas fictional trace",
+        "cwd": "/fictional/repos/moon-garden",
+        "eventCount": 2,
+        "path": "/fictional/sessions/child-a.jsonl"
+      },
+      "events": [
+        {
+          "seq": 0,
+          "tool": "Read",
+          "action": "read",
+          "targets": [{ "path": "src/moon.ts", "fileId": 1, "touch": "read" }],
+          "resultBytes": 8,
+          "isError": false,
+          "summary": "Read the fictional moon module"
+        },
+        {
+          "seq": 1,
+          "tool": "Check",
+          "action": "verify",
+          "targets": [{ "path": "src/moon.ts", "fileId": 1, "touch": "read" }],
+          "resultBytes": 9,
+          "isError": false,
+          "summary": "Check the fictional moon module"
+        }
+      ],
+      "marks": [],
+      "stats": {
+        "filesInRepo": 2,
+        "fovea": 1,
+        "parafovea": 0,
+        "edited": 0,
+        "eventsBeforeFirstEdit": 0,
+        "regressionRate": 0,
+        "errorRate": 0,
+        "actions": { "search": 0, "read": 1, "edit": 0, "exec": 0, "verify": 1, "other": 0 },
+        "errors": { "search": 0, "read": 0, "edit": 0, "exec": 0, "verify": 0, "other": 0 },
+        "maxEditsPerFile": 0,
+        "churnFiles": 0,
+        "userTurns": 0,
+        "compactions": 0,
+        "subagents": 0,
+        "resultBytes": 17,
+        "editsAfterLastVerify": 0,
+        "observability": { "reads": "exact", "errors": "exact" }
+      }
+    },
+    "child-b": {
+      "version": 1,
+      "session": {
+        "id": "synthetic-child-b",
+        "harness": "codex",
+        "model": "fictional-model",
+        "title": "Borealis fictional trace",
+        "cwd": "/fictional/repos/moon-garden",
+        "eventCount": 3,
+        "path": "/fictional/sessions/child-b.jsonl"
+      },
+      "events": [
+        {
+          "seq": 0,
+          "tool": "Read",
+          "action": "read",
+          "targets": [{ "path": "src/garden.ts", "fileId": 2, "touch": "read" }],
+          "resultBytes": 6,
+          "isError": false,
+          "summary": "Read the fictional garden module"
+        },
+        {
+          "seq": 1,
+          "tool": "Search",
+          "action": "search",
+          "targets": [{ "path": "src/moon.ts", "fileId": 1, "touch": "hit" }],
+          "resultBytes": 7,
+          "isError": false,
+          "summary": "Search the fictional moon module"
+        },
+        {
+          "seq": 2,
+          "tool": "Review",
+          "action": "verify",
+          "targets": [{ "path": "src/garden.ts", "fileId": 2, "touch": "read" }],
+          "resultBytes": 8,
+          "isError": false,
+          "summary": "Review the fictional garden module"
+        }
+      ],
+      "marks": [],
+      "stats": {
+        "filesInRepo": 2,
+        "fovea": 1,
+        "parafovea": 1,
+        "edited": 0,
+        "eventsBeforeFirstEdit": 0,
+        "regressionRate": 0,
+        "errorRate": 0,
+        "actions": { "search": 1, "read": 1, "edit": 0, "exec": 0, "verify": 1, "other": 0 },
+        "errors": { "search": 0, "read": 0, "edit": 0, "exec": 0, "verify": 0, "other": 0 },
+        "maxEditsPerFile": 0,
+        "churnFiles": 0,
+        "userTurns": 0,
+        "compactions": 0,
+        "subagents": 0,
+        "resultBytes": 21,
+        "editsAfterLastVerify": 0,
+        "observability": { "reads": "exact", "errors": "exact" }
+      }
+    }
+  },
+  "reportStatus": {
+    "state": "done",
+    "stale": false,
+    "judgeAvailable": true,
+    "judgeCli": "codex",
+    "judgeClis": ["codex"],
+    "report": {
+      "version": 1,
+      "session": { "id": "synthetic-root", "harness": "codex", "eventCount": 4 },
+      "judge": {
+        "cli": "codex",
+        "model": "fictional-model",
+        "promptVersion": 1,
+        "generatedAt": "2026-01-01T00:00:00Z"
+      },
+      "taskSummary": "Review a fictional moon garden.",
+      "dimensions": [
+        {
+          "name": "verification",
+          "verdict": "good",
+          "findings": [
+            {
+              "claim": "The fictional garden was verified.",
+              "severity": "info",
+              "evidenceSeqs": [2]
+            }
+          ]
+        }
+      ],
+      "narrative": "Synthetic evidence for browser automation only."
+    }
+  }
+}
