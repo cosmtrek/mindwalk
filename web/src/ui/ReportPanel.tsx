@@ -5,6 +5,7 @@ import type { JudgeChoice, ReportDimension, ReportStatus, Severity, Verdict } fr
 interface ReportPanelProps {
   status?: ReportStatus;
   analyzing: boolean;
+  locked: boolean;
   onAnalyze: (choice: JudgeChoice) => void;
   onClose: () => void;
   /** jump the playhead to an evidence seq and focus its file in the scene */
@@ -61,7 +62,7 @@ function resolveChoice(choice: JudgeChoice, clis: string[]): JudgeChoice {
 
 // dock panel content: the session evaluation. The Dock owns positioning;
 // this owns only its own markup.
-export function ReportPanel({ status, analyzing, onAnalyze, onClose, onJumpTo }: ReportPanelProps) {
+export function ReportPanel({ status, analyzing, locked, onAnalyze, onClose, onJumpTo }: ReportPanelProps) {
   // the judge choice persists across sessions and reloads; the picker shows
   // wherever a run can start (empty, failed, stale)
   const [storedChoice, setStoredChoice] = useState<JudgeChoice>(loadStoredChoice);
@@ -97,6 +98,7 @@ export function ReportPanel({ status, analyzing, onAnalyze, onClose, onJumpTo }:
       <PanelBody
         status={status}
         analyzing={analyzing}
+        locked={locked}
         analyze={analyze}
         onJumpTo={onJumpTo}
         picker={clis.length > 0 ? <JudgePicker clis={clis} choice={choice} onChange={changeChoice} /> : null}
@@ -148,12 +150,14 @@ function JudgePicker({
 function PanelBody({
   status,
   analyzing,
+  locked,
   analyze,
   onJumpTo,
   picker
 }: {
   status?: ReportStatus;
   analyzing: boolean;
+  locked: boolean;
   analyze: () => void;
   onJumpTo: (seq: number) => void;
   picker: ReactNode;
@@ -232,7 +236,7 @@ function PanelBody({
       ) : null}
       <p className="report-task">{report.taskSummary}</p>
       {report.dimensions.map((dimension) => (
-        <Dimension key={dimension.name} dimension={dimension} onJumpTo={onJumpTo} />
+        <Dimension key={dimension.name} dimension={dimension} locked={locked} onJumpTo={onJumpTo} />
       ))}
       {report.notableMoments?.length ? (
         <section className="report-section">
@@ -242,6 +246,7 @@ function PanelBody({
               key={moment.seq}
               className="report-moment"
               onClick={() => onJumpTo(moment.seq)}
+              disabled={locked}
               title={`Jump to step ${moment.seq + 1}`}
             >
               <strong>#{moment.seq + 1}</strong>
@@ -271,7 +276,15 @@ function PanelBody({
   );
 }
 
-function Dimension({ dimension, onJumpTo }: { dimension: ReportDimension; onJumpTo: (seq: number) => void }) {
+function Dimension({
+  dimension,
+  locked,
+  onJumpTo
+}: {
+  dimension: ReportDimension;
+  locked: boolean;
+  onJumpTo: (seq: number) => void;
+}) {
   const words = DIMENSION_WORDS[dimension.name] ?? { title: dimension.name, hint: "" };
   return (
     <section className="report-dimension">
@@ -287,7 +300,7 @@ function Dimension({ dimension, onJumpTo }: { dimension: ReportDimension; onJump
             const seq = finding.evidenceSeqs?.[0];
             if (seq !== undefined) onJumpTo(seq);
           }}
-          disabled={!finding.evidenceSeqs?.length}
+          disabled={locked || !finding.evidenceSeqs?.length}
           title={
             finding.evidenceSeqs?.length
               ? `Jump to step ${finding.evidenceSeqs[0] + 1} — evidence: ${finding.evidenceSeqs.map((seq) => `#${seq + 1}`).join(" ")}`

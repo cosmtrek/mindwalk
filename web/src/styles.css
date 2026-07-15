@@ -2195,6 +2195,12 @@ dd {
   cursor: default;
 }
 
+.report-finding:disabled,
+.report-moment:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .severity-dot {
   width: 7px;
   height: 7px;
@@ -2232,7 +2238,7 @@ dd {
   line-height: 1.5;
 }
 
-.report-moment:hover {
+.report-moment:hover:not(:disabled) {
   color: var(--ink);
   background: var(--panel-raised);
 }

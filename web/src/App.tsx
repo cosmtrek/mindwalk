@@ -389,6 +389,7 @@ export default function App() {
     // toggle (see the `exporting` prop threaded into Timeline/SessionRail/Hud)
     // so nothing else moves the playhead or swaps the canvas mid-recording
     const exportSessionKey = activeSessionKeyRef.current;
+    const exportActorID = activeAgentIDRef.current;
     const resumeSeq = useAppStore.getState().currentSeq;
     agentTraceRequest.current++;
     pendingAgentIDRef.current = undefined;
@@ -407,9 +408,12 @@ export default function App() {
     } catch (err) {
       setError(describeError(err, "exporting the video"));
     } finally {
-      // only restore the playhead if we're still on the same session — a guard
-      // in case a switch slipped through; normally the UI lock prevents it
-      if (activeSessionKeyRef.current === exportSessionKey) {
+      // only restore the playhead if we're still on the same session and actor —
+      // a guard in case a switch slipped through; normally the UI lock prevents it
+      if (
+        activeSessionKeyRef.current === exportSessionKey &&
+        activeAgentIDRef.current === exportActorID
+      ) {
         setCurrentSeq(resumeSeq);
       }
       exportingRef.current = false;
@@ -536,6 +540,7 @@ export default function App() {
   // the dock away from the evaluation tab
   const jumpToEvidence = useCallback(
     (seq: number) => {
+      if (exportingRef.current) return;
       const rootTrace = rootTraceRef.current;
       const rootCity = rootCityRef.current;
       if (!rootTrace || !rootCity) return;
@@ -781,6 +786,7 @@ export default function App() {
                           <ReportPanel
                             status={reportStatus}
                             analyzing={reportStatus?.state === "running"}
+                            locked={exporting}
                             onAnalyze={(choice) => void analyzeSession(choice)}
                             onClose={closeSheet}
                             onJumpTo={jumpToEvidence}

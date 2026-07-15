@@ -394,6 +394,12 @@
           ]
         }
       ],
+      "notableMoments": [
+        {
+          "seq": 0,
+          "note": "A fictional checkpoint was recorded."
+        }
+      ],
       "narrative": "Synthetic evidence for browser automation only."
     }
   }

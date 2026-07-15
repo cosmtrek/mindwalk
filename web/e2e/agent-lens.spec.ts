@@ -165,6 +165,83 @@ test("subagent marks open Agents only and report evidence restores Main", async 
   await expect(page.locator(".deck-pos-count")).toHaveText("3 / 4");
 });
 
+test("export locks evaluation navigation without changing the child lens or playhead", async ({ page }) => {
+  await page.addInitScript(() => {
+    const recording = window as Window & {
+      __finishFakeRecording?: () => void;
+      __fakeRecordingStopped?: boolean;
+    };
+
+    class FakeMediaRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+
+      state = "inactive";
+      mimeType: string;
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onstop: (() => void) | null = null;
+
+      constructor(_stream: unknown, options?: { mimeType?: string }) {
+        this.mimeType = options?.mimeType ?? "video/webm";
+      }
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["fictional-video"], { type: this.mimeType }) });
+        recording.__fakeRecordingStopped = true;
+        recording.__finishFakeRecording = () => this.onstop?.();
+      }
+    }
+
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: FakeMediaRecorder });
+    Object.defineProperty(HTMLCanvasElement.prototype, "captureStream", {
+      configurable: true,
+      value: () => ({ getTracks: () => [{ stop() {} }] })
+    });
+    HTMLAnchorElement.prototype.click = function click() {};
+  });
+
+  await mockApp(page);
+  await openFixture(page);
+  const panel = await openAgents(page);
+  await row(panel, "Borealis").click();
+  await page.getByRole("slider", { name: "Playback position" }).fill("1");
+  await page.getByRole("button", { name: "Evaluation ready", exact: true }).click();
+
+  await page.getByRole("button", { name: "More playback controls" }).click();
+  await page.getByRole("button", { name: "Export video" }).click();
+  await page.waitForFunction(() => {
+    return (window as Window & { __fakeRecordingStopped?: boolean }).__fakeRecordingStopped === true;
+  });
+
+  const evidence = page.getByRole("button", { name: "The fictional garden was verified." });
+  const moment = page.getByRole("button", { name: /A fictional checkpoint was recorded/ });
+  await expect(evidence).toBeDisabled();
+  await expect(moment).toBeDisabled();
+
+  for (const control of [evidence, moment]) {
+    await control.evaluate((button) => {
+      button.removeAttribute("disabled");
+      button.click();
+    });
+    await expect(page.locator(".hud-lens")).toHaveText("LensBorealis");
+    await expect(page.locator(".deck-pos-count")).toHaveText("3 / 3");
+  }
+
+  await page.evaluate(() => {
+    (window as Window & { __finishFakeRecording?: () => void }).__finishFakeRecording?.();
+  });
+  await expect(page.getByRole("button", { name: "More playback controls" })).toBeEnabled();
+  await expect(page.locator(".hud-lens")).toHaveText("LensBorealis");
+  await expect(page.locator(".deck-pos-count")).toHaveText("2 / 3");
+});
+
 test("a rapid delayed Atlas to Borealis switch cannot let Atlas overwrite Borealis", async ({ page }) => {
   const atlasRelease = deferred();
   const atlasFulfilled = deferred();
