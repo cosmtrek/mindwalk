@@ -680,6 +680,14 @@ func TestAgentAPIsAreRootScoped(t *testing.T) {
 	if cachedChild.Events[0].Targets[0].Path != "b.go" {
 		t.Fatalf("projected child shares target storage with cache: %#v", cachedChild.Events[0].Targets[0])
 	}
+	projected.Events[0].Targets[0].Lines[0][0] = 99
+	if got := cachedChild.Events[0].Targets[0].Lines[0][0]; got != 4 {
+		t.Fatalf("projected child shares target line storage with cache: got=%d want=4", got)
+	}
+	sourceChild := source.traces[filepath.Clean(childMeta.Path)]
+	if got := sourceChild.Events[0].Targets[0].Lines[0][0]; got != 4 {
+		t.Fatalf("projected child shares target line storage with source: got=%d want=4", got)
+	}
 
 	secondChild := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/child-a/trace")
 	if secondChild.Code != http.StatusOK || source.parses["child-a"] != 1 {
@@ -1071,6 +1079,7 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 		meta := metas[filepath.Clean(paths[id])]
 		events := []model.Event{{Seq: 0, Tool: "Read", Action: "read", Targets: []model.Target{{Path: target, Touch: "read"}}}}
 		if id == "child-a" {
+			events[0].Targets[0].Lines = [][2]int{{4, 8}}
 			events = append(events, model.Event{Seq: 1, Tool: "Exec", Action: "exec", Targets: []model.Target{}, Outside: []model.OutsideTouch{}})
 		}
 		traces[filepath.Clean(paths[id])] = &model.Trace{

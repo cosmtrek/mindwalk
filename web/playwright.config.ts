@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: "line",
-  outputDir: "../.superpowers/sdd/qa/playwright-results",
+  outputDir: "../.tmp-agent-lens-playwright/results",
   use: {
     baseURL: "http://127.0.0.1:4173",
     channel: "chrome",

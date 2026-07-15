@@ -890,6 +890,9 @@ func traceAgainstCity(trace *model.Trace, city *model.CityMap) *model.Trace {
 	clone.Events = append([]model.Event{}, trace.Events...)
 	for i := range clone.Events {
 		clone.Events[i].Targets = append([]model.Target{}, trace.Events[i].Targets...)
+		for j := range clone.Events[i].Targets {
+			clone.Events[i].Targets[j].Lines = append([][2]int{}, trace.Events[i].Targets[j].Lines...)
+		}
 		clone.Events[i].Outside = append([]model.OutsideTouch{}, trace.Events[i].Outside...)
 	}
 	clone.Marks = append([]model.Mark{}, trace.Marks...)

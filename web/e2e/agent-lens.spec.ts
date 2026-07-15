@@ -11,6 +11,14 @@ const fixtures = JSON.parse(
 
 type TraceRoute = (agentID: string, requestCount: number, route: Route) => Promise<void>;
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((release) => {
+    resolve = release;
+  });
+  return { promise, resolve };
+}
+
 async function mockApp(page: Page, traceRoute?: TraceRoute) {
   const requests = new Map<string, number>();
 
@@ -118,6 +126,24 @@ test("Agents shows truthful rows and switches lenses without letting missing row
   await expect(page.locator(".hud-lens")).toHaveText("LensAtlas");
 });
 
+test("an available zero-event child opens an empty lens and returns to Main", async ({ page }) => {
+  await mockApp(page);
+  await openFixture(page);
+  const panel = await openAgents(page);
+  const nova = row(panel, "Nova");
+
+  await expect(nova).toContainText("0 events");
+  await expect(nova).toBeEnabled();
+  await nova.click();
+  await expect(page.locator(".hud-lens")).toHaveText("LensNova");
+  await expect(page.locator(".deck-pos-count")).toHaveText("0 / 0");
+  await expect(page.locator(".readout-summary")).toHaveText("Select a session to start the walk.");
+
+  await row(panel, "Main").click();
+  await expect(page.locator(".hud-lens")).toHaveText("LensMain");
+  await expect(page.locator(".deck-pos-count")).toHaveText("4 / 4");
+});
+
 test("subagent marks open Agents only and report evidence restores Main", async ({ page }) => {
   await mockApp(page);
   await openFixture(page);
@@ -140,9 +166,12 @@ test("subagent marks open Agents only and report evidence restores Main", async 
 });
 
 test("a rapid delayed Atlas to Borealis switch cannot let Atlas overwrite Borealis", async ({ page }) => {
+  const atlasRelease = deferred();
+  const atlasFulfilled = deferred();
   await mockApp(page, async (agentID, _count, route) => {
-    if (agentID === "child-a") await new Promise((resolve) => setTimeout(resolve, 350));
+    if (agentID === "child-a") await atlasRelease.promise;
     await fulfillAgentTrace(agentID, route);
+    if (agentID === "child-a") atlasFulfilled.resolve();
   });
   await openFixture(page);
   const panel = await openAgents(page);
@@ -153,7 +182,8 @@ test("a rapid delayed Atlas to Borealis switch cannot let Atlas overwrite Boreal
   await expect(page.locator(".hud-lens")).toHaveText("LensBorealis");
   await expect(page.locator(".deck-pos-count")).toHaveText("3 / 3");
 
-  await page.waitForTimeout(450);
+  atlasRelease.resolve();
+  await atlasFulfilled.promise;
   await expect(page.locator(".hud-lens")).toHaveText("LensBorealis");
   await expect(row(panel, "Borealis")).toHaveAttribute("aria-pressed", "true");
 });
@@ -182,6 +212,8 @@ test("a failed child load keeps Main visible and Retry starts a fresh request", 
 test("export locks lens controls, discards delayed child data, and allows a fresh request afterward", async ({
   page
 }) => {
+  const borealisRelease = deferred();
+  const borealisFulfilled = deferred();
   await page.addInitScript(() => {
     class FakeMediaRecorder {
       static isTypeSupported() {
@@ -223,9 +255,10 @@ test("export locks lens controls, discards delayed child data, and allows a fres
       return;
     }
     if (agentID === "child-b" && count === 1) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await borealisRelease.promise;
     }
     await fulfillAgentTrace(agentID, route);
+    if (agentID === "child-b" && count === 1) borealisFulfilled.resolve();
   });
   await openFixture(page);
   const panel = await openAgents(page);
@@ -251,7 +284,9 @@ test("export locks lens controls, discards delayed child data, and allows a fres
   await expect(panel).toContainText("Loading trace…");
   await page.getByRole("button", { name: "More playback controls" }).click();
   await page.getByRole("button", { name: "Export video" }).click();
-  await page.waitForTimeout(400);
+  await expect(page.locator(".hud-lens")).toHaveText("LensMain");
+  borealisRelease.resolve();
+  await borealisFulfilled.promise;
   await expect(page.locator(".hud-lens")).toHaveText("LensMain");
   await expect(page.getByRole("button", { name: "More playback controls" })).toBeEnabled({ timeout: 3_000 });
   await expect(page.locator(".hud-lens")).toHaveText("LensMain");

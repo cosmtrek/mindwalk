@@ -101,6 +101,23 @@
         "linkMethod": "codex-agent-id"
       },
       {
+        "id": "child-zero",
+        "parentId": "main",
+        "depth": 1,
+        "kind": "subagent",
+        "label": "Nova",
+        "role": "observer",
+        "instructionPreview": "Observe the fictional empty orchard",
+        "launchSeq": 3,
+        "launchCallId": "fictional-call-zero",
+        "status": "launched",
+        "traceAvailability": "available",
+        "traceSessionKey": "synthetic-child-zero",
+        "traceEventCount": 0,
+        "linkQuality": "exact",
+        "linkMethod": "codex-agent-id"
+      },
+      {
         "id": "child-missing",
         "parentId": "main",
         "depth": 1,
@@ -310,6 +327,39 @@
         "compactions": 0,
         "subagents": 0,
         "resultBytes": 21,
+        "editsAfterLastVerify": 0,
+        "observability": { "reads": "exact", "errors": "exact" }
+      }
+    },
+    "child-zero": {
+      "version": 1,
+      "session": {
+        "id": "synthetic-child-zero",
+        "harness": "codex",
+        "model": "fictional-model",
+        "title": "Nova fictional empty trace",
+        "cwd": "/fictional/repos/moon-garden",
+        "eventCount": 0,
+        "path": "/fictional/sessions/child-zero.jsonl"
+      },
+      "events": [],
+      "marks": [],
+      "stats": {
+        "filesInRepo": 2,
+        "fovea": 0,
+        "parafovea": 0,
+        "edited": 0,
+        "eventsBeforeFirstEdit": 0,
+        "regressionRate": 0,
+        "errorRate": 0,
+        "actions": { "search": 0, "read": 0, "edit": 0, "exec": 0, "verify": 0, "other": 0 },
+        "errors": { "search": 0, "read": 0, "edit": 0, "exec": 0, "verify": 0, "other": 0 },
+        "maxEditsPerFile": 0,
+        "churnFiles": 0,
+        "userTurns": 0,
+        "compactions": 0,
+        "subagents": 0,
+        "resultBytes": 0,
         "editsAfterLastVerify": 0,
         "observability": { "reads": "exact", "errors": "exact" }
       }
