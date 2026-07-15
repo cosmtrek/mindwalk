@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/cosmtrek/mindwalk/internal/model"
 )
@@ -36,6 +37,19 @@ func TestUserMessageNoteStaysWithinRuneBudget(t *testing.T) {
 	exact := strings.Repeat("a", userMessageNoteLimit)
 	if UserMessageNote(exact) != exact {
 		t.Fatal("text at the limit must pass through untouched")
+	}
+}
+
+func TestSummarizeToolTruncatesCommandAtRuneBoundary(t *testing.T) {
+	command := strings.Repeat("a", 92) + "界tail"
+	summary := SummarizeTool("exec", map[string]any{"cmd": command}, nil, nil, false)
+
+	if !utf8.ValidString(summary) {
+		t.Fatalf("summary contains invalid UTF-8: %q", summary)
+	}
+	want := strings.Repeat("a", 92) + "界... -> 0 targets, 0 outside"
+	if summary != want {
+		t.Fatalf("summary = %q, want %q", summary, want)
 	}
 }
 

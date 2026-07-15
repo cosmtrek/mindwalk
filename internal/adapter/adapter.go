@@ -960,9 +960,10 @@ func SummarizeTool(tool string, input map[string]any, targets []model.Target, ou
 		verb = desc
 	}
 	if command := firstString(input, "command", "cmd"); command != "" {
+		commandRunes := []rune(command)
 		verb = command
-		if len(verb) > 96 {
-			verb = verb[:93] + "..."
+		if len(commandRunes) > 96 {
+			verb = string(commandRunes[:93]) + "..."
 		}
 	}
 	status := ""
