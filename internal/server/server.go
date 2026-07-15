@@ -887,12 +887,12 @@ func assignFileIDs(trace *model.Trace, city *model.CityMap) {
 
 func traceAgainstCity(trace *model.Trace, city *model.CityMap) *model.Trace {
 	clone := *trace
-	clone.Events = append([]model.Event(nil), trace.Events...)
+	clone.Events = append([]model.Event{}, trace.Events...)
 	for i := range clone.Events {
-		clone.Events[i].Targets = append([]model.Target(nil), trace.Events[i].Targets...)
-		clone.Events[i].Outside = append([]model.OutsideTouch(nil), trace.Events[i].Outside...)
+		clone.Events[i].Targets = append([]model.Target{}, trace.Events[i].Targets...)
+		clone.Events[i].Outside = append([]model.OutsideTouch{}, trace.Events[i].Outside...)
 	}
-	clone.Marks = append([]model.Mark(nil), trace.Marks...)
+	clone.Marks = append([]model.Mark{}, trace.Marks...)
 	assignFileIDs(&clone, city)
 	clone.Stats = model.ComputeStats(&clone, repoFileCount(city), trace.Stats.Observability.Errors)
 	return &clone

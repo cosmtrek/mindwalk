@@ -574,7 +574,7 @@ func TestAgentAPIsAreRootScoped(t *testing.T) {
 	if err := json.Unmarshal(graphResp.Body.Bytes(), &graph); err != nil {
 		t.Fatal(err)
 	}
-	if graph.RootSessionKey != "root-a" || len(graph.Agents) != 4 || graph.Agents[0].ID != "main-a" {
+	if graph.RootSessionKey != "root-a" || len(graph.Agents) != 5 || graph.Agents[0].ID != "main-a" {
 		t.Fatalf("graph = %#v", graph)
 	}
 
@@ -599,6 +599,17 @@ func TestAgentAPIsAreRootScoped(t *testing.T) {
 	if childResp.Code != http.StatusOK {
 		t.Fatalf("child trace status = %d body=%q", childResp.Code, childResp.Body.String())
 	}
+	var childWire struct {
+		Events []struct {
+			Targets json.RawMessage `json:"targets"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(childResp.Body.Bytes(), &childWire); err != nil {
+		t.Fatal(err)
+	}
+	if len(childWire.Events) != 2 || string(childWire.Events[1].Targets) != "[]" {
+		t.Fatalf("empty child targets serialized as null: %s", childResp.Body.String())
+	}
 	var childTrace model.Trace
 	if err := json.Unmarshal(childResp.Body.Bytes(), &childTrace); err != nil {
 		t.Fatal(err)
@@ -606,7 +617,7 @@ func TestAgentAPIsAreRootScoped(t *testing.T) {
 	if childTrace.Session.ID != "child-a" || childTrace.Stats.FilesInRepo != 2 {
 		t.Fatalf("child trace = %#v", childTrace)
 	}
-	if len(childTrace.Events) != 1 || len(childTrace.Events[0].Targets) != 1 || childTrace.Events[0].Targets[0].FileID == nil {
+	if len(childTrace.Events) != 2 || len(childTrace.Events[0].Targets) != 1 || childTrace.Events[0].Targets[0].FileID == nil {
 		t.Fatalf("child target was not assigned against root city: %#v", childTrace.Events)
 	}
 	_, rootCity, err := s.traceAndMap("root-a")
@@ -621,6 +632,53 @@ func TestAgentAPIsAreRootScoped(t *testing.T) {
 	}
 	if got := *childTrace.Events[0].Targets[0].FileID; wantFileID == 0 || got != wantFileID {
 		t.Fatalf("child file id = %d, want root city b.go id %d", got, wantFileID)
+	}
+
+	zeroResp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/zero-a/trace")
+	if zeroResp.Code != http.StatusOK {
+		t.Fatalf("zero-event child status = %d body=%q", zeroResp.Code, zeroResp.Body.String())
+	}
+	var zeroWire struct {
+		Events json.RawMessage `json:"events"`
+		Marks  json.RawMessage `json:"marks"`
+	}
+	if err := json.Unmarshal(zeroResp.Body.Bytes(), &zeroWire); err != nil {
+		t.Fatal(err)
+	}
+	if string(zeroWire.Events) != "[]" || string(zeroWire.Marks) != "[]" {
+		t.Fatalf("zero-event child slices serialized as null: %s", zeroResp.Body.String())
+	}
+
+	var childMeta model.SessionMeta
+	for _, meta := range source.metas {
+		if meta.ID == "child-a" {
+			childMeta = meta
+			break
+		}
+	}
+	cachedChild, childCity, err := s.traceAndMapMeta(childMeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCachedFileID := 0
+	for _, file := range childCity.Files {
+		if file.Path == "b.go" {
+			wantCachedFileID = file.ID
+		}
+	}
+	if got := cachedChild.Events[0].Targets[0].FileID; got == nil || *got != wantCachedFileID {
+		t.Fatalf("cached child file id mutated by root projection: got=%v want=%d", got, wantCachedFileID)
+	}
+	if cachedChild.Events[1].Targets != nil || cachedChild.Events[1].Outside != nil {
+		t.Fatalf("cached child empty slices were mutated: %#v", cachedChild.Events[1])
+	}
+	projected := traceAgainstCity(cachedChild, rootCity)
+	if projected.Events[1].Targets == nil || projected.Events[1].Outside == nil {
+		t.Fatalf("projected child empty slices are nil: %#v", projected.Events[1])
+	}
+	projected.Events[0].Targets[0].Path = "changed.go"
+	if cachedChild.Events[0].Targets[0].Path != "b.go" {
+		t.Fatalf("projected child shares target storage with cache: %#v", cachedChild.Events[0].Targets[0])
 	}
 
 	secondChild := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/child-a/trace")
@@ -985,7 +1043,7 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 	}
 
 	paths := map[string]string{}
-	for _, id := range []string{"root-a", "child-a", "root-b", "child-b"} {
+	for _, id := range []string{"root-a", "child-a", "child-zero", "root-b", "child-b"} {
 		paths[id] = filepath.Join(dir, id+".jsonl")
 		writeServerSession(t, paths[id], "{}")
 	}
@@ -994,7 +1052,10 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 			Key: "root-a", ID: "root-a", Harness: "agent-api", Path: paths["root-a"], Cwd: rootRepo, EventCount: 1,
 		},
 		filepath.Clean(paths["child-a"]): {
-			Key: "child-a-key", ID: "child-a", Harness: "agent-api", Path: paths["child-a"], Cwd: childRepo, EventCount: 1, Auxiliary: true,
+			Key: "child-a-key", ID: "child-a", Harness: "agent-api", Path: paths["child-a"], Cwd: childRepo, EventCount: 2, Auxiliary: true,
+		},
+		filepath.Clean(paths["child-zero"]): {
+			Key: "child-zero-key", ID: "child-zero", Harness: "agent-api", Path: paths["child-zero"], Cwd: childRepo, EventCount: 0, Auxiliary: true,
 		},
 		filepath.Clean(paths["root-b"]): {
 			Key: "root-b", ID: "root-b", Harness: "agent-api", Path: paths["root-b"], Cwd: otherRepo, EventCount: 1,
@@ -1008,13 +1069,25 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 		"root-a": "a.go", "child-a": "b.go", "root-b": "c.go", "child-b": "c.go",
 	} {
 		meta := metas[filepath.Clean(paths[id])]
+		events := []model.Event{{Seq: 0, Tool: "Read", Action: "read", Targets: []model.Target{{Path: target, Touch: "read"}}}}
+		if id == "child-a" {
+			events = append(events, model.Event{Seq: 1, Tool: "Exec", Action: "exec", Targets: []model.Target{}, Outside: []model.OutsideTouch{}})
+		}
 		traces[filepath.Clean(paths[id])] = &model.Trace{
 			Version: 1,
-			Session: model.TraceSession{ID: id, Harness: "agent-api", Cwd: meta.Cwd, Path: meta.Path, EventCount: 1},
-			Events:  []model.Event{{Seq: 0, Tool: "Read", Action: "read", Targets: []model.Target{{Path: target, Touch: "read"}}}},
+			Session: model.TraceSession{ID: id, Harness: "agent-api", Cwd: meta.Cwd, Path: meta.Path, EventCount: len(events)},
+			Events:  events,
 			Marks:   []model.Mark{},
-			Stats:   model.ComputeStats(&model.Trace{Events: []model.Event{{Action: "read", Targets: []model.Target{{Path: target, Touch: "read"}}}}}, 1, model.ObservabilityExact),
+			Stats:   model.ComputeStats(&model.Trace{Events: events}, 1, model.ObservabilityExact),
 		}
+	}
+	zeroMeta := metas[filepath.Clean(paths["child-zero"])]
+	traces[filepath.Clean(paths["child-zero"])] = &model.Trace{
+		Version: 1,
+		Session: model.TraceSession{ID: "child-zero", Harness: "agent-api", Cwd: zeroMeta.Cwd, Path: zeroMeta.Path, EventCount: 0},
+		Events:  []model.Event{},
+		Marks:   []model.Mark{},
+		Stats:   model.ComputeStats(&model.Trace{Events: []model.Event{}}, 1, model.ObservabilityExact),
 	}
 	graphs := map[string]*model.AgentGraph{
 		"root-a": {
@@ -1022,6 +1095,7 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 			Agents: []model.AgentNode{
 				{ID: "main-a", Kind: model.AgentKindMain, Label: "Main", Status: model.AgentStatusMain, TraceAvailability: model.TraceAvailabilityAvailable, TraceSessionKey: "root-a"},
 				{ID: "child-a", ParentID: "main-a", Depth: 1, Kind: model.AgentKindSubagent, Label: "Child A", Status: model.AgentStatusLaunched, TraceAvailability: model.TraceAvailabilityAvailable, TraceSessionKey: "child-a-key"},
+				{ID: "zero-a", ParentID: "main-a", Depth: 1, Kind: model.AgentKindSubagent, Label: "Zero", Status: model.AgentStatusLaunched, TraceAvailability: model.TraceAvailabilityAvailable, TraceSessionKey: "child-zero-key"},
 				{ID: "missing-a", ParentID: "main-a", Depth: 1, Kind: model.AgentKindSubagent, Label: "Missing", Status: model.AgentStatusLaunched, TraceAvailability: model.TraceAvailabilityMissing},
 				{ID: "failed-a", ParentID: "main-a", Depth: 1, Kind: model.AgentKindSubagent, Label: "Failed", Status: model.AgentStatusFailed, TraceAvailability: model.TraceAvailabilityUnavailable},
 			},
