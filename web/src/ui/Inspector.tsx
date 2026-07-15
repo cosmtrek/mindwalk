@@ -8,11 +8,19 @@ interface InspectorProps {
   history: TraceEvent[];
   onClose: () => void;
   onJumpTo: (seq: number) => void;
+  locked?: boolean;
 }
 
 // dock panel content: the selected file's identity, touch state, and visit
 // history. The Dock owns positioning; this owns only its own markup.
-export function Inspector({ file, touch, history, onClose, onJumpTo }: InspectorProps) {
+export function Inspector({
+  file,
+  touch,
+  history,
+  onClose,
+  onJumpTo,
+  locked = false
+}: InspectorProps) {
   if (!file) {
     return (
       <div className="dock-body" aria-label="File inspector">
@@ -73,6 +81,7 @@ export function Inspector({ file, touch, history, onClose, onJumpTo }: Inspector
                 key={event.seq}
                 className="history-row"
                 onClick={() => onJumpTo(event.seq)}
+                disabled={locked}
                 title={`Jump to step ${event.seq + 1} — ${event.summary}`}
               >
                 <span className={`action-dot ${event.action}`} />

@@ -158,7 +158,13 @@ export const SessionRail = memo(function SessionRail({
               </div>
             ) : null}
           </div>
-          <button className="icon-btn" onClick={onRefresh} title="Rescan sessions" aria-label="Rescan sessions">
+          <button
+            className="icon-btn"
+            onClick={onRefresh}
+            disabled={locked}
+            title="Rescan sessions"
+            aria-label="Rescan sessions"
+          >
             <RefreshCw size={15} />
           </button>
           <button

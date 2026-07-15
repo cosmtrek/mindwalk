@@ -978,9 +978,14 @@ dd {
   font-size: var(--text-xs);
 }
 
-.history-row:hover {
+.history-row:hover:not(:disabled) {
   background: var(--panel-raised);
   color: var(--ink);
+}
+
+.history-row:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .history-row strong {
@@ -988,7 +993,7 @@ dd {
   color: var(--faint);
 }
 
-.history-row:hover strong {
+.history-row:hover:not(:disabled) strong {
   color: var(--muted);
 }
 
@@ -1080,9 +1085,14 @@ dd {
   color: var(--muted);
 }
 
-.icon-btn:hover {
+.icon-btn:hover:not(:disabled) {
   color: var(--ink);
   background: var(--panel-raised);
+}
+
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .icon-btn.recording {

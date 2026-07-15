@@ -459,7 +459,7 @@ export default function App() {
   // must be refetched explicitly — it may have gone stale or finished while
   // we weren't polling
   const refresh = useCallback(() => {
-    if (manualRefreshInFlight.current) return;
+    if (exportingRef.current || manualRefreshInFlight.current) return;
     manualRefreshInFlight.current = true;
     const key = activeSessionKeyRef.current;
     if (key && !mapOnly) void refreshReport(key);
@@ -565,6 +565,11 @@ export default function App() {
   const openAgentsAtMark = useCallback((seq: number) => {
     setCurrentSeq(seq);
     setOpenSheet("agents");
+  }, [setCurrentSeq]);
+
+  const jumpToHistory = useCallback((seq: number) => {
+    if (exportingRef.current) return;
+    setCurrentSeq(seq);
   }, [setCurrentSeq]);
 
   useEffect(() => {
@@ -745,7 +750,8 @@ export default function App() {
                       touch={selectedFile ? playback.touchByPath.get(selectedFile.path) : undefined}
                       history={selectedFile ? (playback.historyByPath.get(selectedFile.path) ?? []) : []}
                       onClose={closeSheet}
-                      onJumpTo={setCurrentSeq}
+                      onJumpTo={jumpToHistory}
+                      locked={exporting}
                     />
                   )
                 },
