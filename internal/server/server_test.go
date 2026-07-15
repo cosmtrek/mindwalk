@@ -413,27 +413,37 @@ func TestServerLoadsCodexSessions(t *testing.T) {
 	}
 }
 
-func TestServerSkipsClaudeSubagentSessions(t *testing.T) {
+func TestServerRetainsClaudeSubagentInCatalog(t *testing.T) {
 	claudeDir := t.TempDir()
-	session := filepath.Join(claudeDir, "main.jsonl")
-	subagent := filepath.Join(claudeDir, "subagents", "agent-child.jsonl")
+	session := filepath.Join(claudeDir, "root-id.jsonl")
+	subagent := filepath.Join(claudeDir, "root-id", "subagents", "agent-child.jsonl")
 	if err := os.MkdirAll(filepath.Dir(subagent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeServerSession(t, session,
-		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"main","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
+		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"root-id","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
 	)
 	writeServerSession(t, subagent,
-		`{"type":"user","timestamp":"2026-07-09T00:00:01Z","sessionId":"subagent","cwd":"/tmp","message":{"role":"user","content":"internal"}}`,
+		`{"type":"user","timestamp":"2026-07-09T00:00:01Z","sessionId":"root-id","agentId":"child","isSidechain":true,"cwd":"/tmp","message":{"role":"user","content":"internal"}}`,
 	)
 
 	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
-	sessions, err := s.scanSessions()
-	if err != nil {
+	sessions := requestSessions(t, s, "/api/sessions")
+	if len(sessions) != 1 || sessions[0].ID != "root-id" {
+		t.Fatalf("sessions = %#v", sessions)
+	}
+	childKey := adapter.SessionKey("claude-code", subagent)
+	child, ok := s.sessionCatalog[childKey]
+	if !ok || !child.Auxiliary || child.ID != "child" {
+		t.Fatalf("catalog child = %#v, ok = %v", child, ok)
+	}
+
+	if err := os.Remove(subagent); err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 1 || sessions[0].ID != "main" {
-		t.Fatalf("sessions = %#v", sessions)
+	requestSessions(t, s, "/api/sessions?fresh=1")
+	if _, ok := s.sessionCatalog[childKey]; ok {
+		t.Fatalf("stale child retained in fresh catalog: %#v", s.sessionCatalog[childKey])
 	}
 }
 
@@ -485,24 +495,19 @@ func TestServerSkipsCodexSubagentSessions(t *testing.T) {
 		t.Fatalf("sessions = %#v", sessions)
 	}
 
-	// Default discovery hides auxiliary rollouts, while an explicitly opened
-	// path remains available for targeted inspection.
+	// Explicitly opening an auxiliary rollout keeps it available internally
+	// without leaking it into the visible session list.
 	explicit := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, OpenSession: subagentSession})
 	explicitSessions, err := explicit.listSessions()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(explicitSessions) != 2 {
+	if len(explicitSessions) != 1 || explicitSessions[0].ID != "main-thread" {
 		t.Fatalf("explicit sessions = %#v", explicitSessions)
 	}
-	foundSubagent := false
-	for _, session := range explicitSessions {
-		if session.Path == subagentSession && session.ID == "child-thread" {
-			foundSubagent = true
-		}
-	}
-	if !foundSubagent {
-		t.Fatalf("explicit subagent missing from %#v", explicitSessions)
+	childKey := adapter.SessionKey("codex", subagentSession)
+	if child, ok := explicit.sessionCatalog[childKey]; !ok || child.ID != "child-thread" || !child.Auxiliary {
+		t.Fatalf("explicit catalog child = %#v, ok = %v", child, ok)
 	}
 }
 

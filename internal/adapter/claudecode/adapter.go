@@ -84,7 +84,19 @@ func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 		if isClaudeLine(line) {
 			recognized = true
 		}
-		if line.SessionID != "" {
+		if line.IsSidechain {
+			meta.Auxiliary = true
+			if meta.Agent == nil {
+				meta.Agent = &model.AgentSessionMeta{}
+			}
+			if line.AgentID != "" {
+				meta.ID = line.AgentID
+				meta.Agent.SourceID = line.AgentID
+			}
+			if line.SessionID != "" {
+				meta.Agent.RootSessionID = line.SessionID
+			}
+		} else if line.SessionID != "" && !meta.Auxiliary {
 			meta.ID = line.SessionID
 		}
 		if line.Timestamp != "" {
@@ -117,6 +129,21 @@ func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 			}
 		}
 	})
+	if meta.Auxiliary {
+		var childMeta struct {
+			AgentType   string `json:"agentType"`
+			Description string `json:"description"`
+			ToolUseID   string `json:"toolUseId"`
+			SpawnDepth  int    `json:"spawnDepth"`
+		}
+		data, readErr := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".meta.json")
+		if readErr == nil && json.Unmarshal(data, &childMeta) == nil {
+			meta.Agent.Depth = childMeta.SpawnDepth
+			meta.Agent.Label = childMeta.Description
+			meta.Agent.Role = childMeta.AgentType
+			meta.Agent.LaunchCallID = childMeta.ToolUseID
+		}
+	}
 	if meta.Title == "" {
 		meta.Title = filepath.Base(path)
 	}
@@ -232,15 +259,17 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 }
 
 type rawLine struct {
-	Type      string          `json:"type"`
-	Timestamp string          `json:"timestamp"`
-	SessionID string          `json:"sessionId"`
-	Cwd       string          `json:"cwd"`
-	GitBranch string          `json:"gitBranch"`
-	Message   json.RawMessage `json:"message"`
-	AITitle   string          `json:"aiTitle"`
-	Content   string          `json:"content"`
-	Subtype   string          `json:"subtype"`
+	Type        string          `json:"type"`
+	Timestamp   string          `json:"timestamp"`
+	SessionID   string          `json:"sessionId"`
+	AgentID     string          `json:"agentId"`
+	IsSidechain bool            `json:"isSidechain"`
+	Cwd         string          `json:"cwd"`
+	GitBranch   string          `json:"gitBranch"`
+	Message     json.RawMessage `json:"message"`
+	AITitle     string          `json:"aiTitle"`
+	Content     string          `json:"content"`
+	Subtype     string          `json:"subtype"`
 }
 
 type message struct {

@@ -43,22 +43,23 @@ type Config struct {
 }
 
 type Server struct {
-	cfg       Config
-	adapters  []adapter.Source
-	mu        sync.Mutex
-	scanMu    sync.Mutex
-	sessions  []model.SessionMeta
-	sessionAt time.Time
-	freshGen  uint64
-	traces    map[string]*model.Trace
-	maps      map[string]*model.CityMap
-	cacheAt   map[string]time.Time
-	cacheUsed map[string]time.Time
-	cacheFile map[string]fileFingerprint
-	inflight  map[string]*inflightLoad
-	summaries map[string]summaryCacheEntry
-	repoMaps  map[string]repoMapEntry
-	repoMapMu sync.Mutex
+	cfg            Config
+	adapters       []adapter.Source
+	mu             sync.Mutex
+	scanMu         sync.Mutex
+	sessions       []model.SessionMeta
+	sessionCatalog map[string]model.SessionMeta
+	sessionAt      time.Time
+	freshGen       uint64
+	traces         map[string]*model.Trace
+	maps           map[string]*model.CityMap
+	cacheAt        map[string]time.Time
+	cacheUsed      map[string]time.Time
+	cacheFile      map[string]fileFingerprint
+	inflight       map[string]*inflightLoad
+	summaries      map[string]summaryCacheEntry
+	repoMaps       map[string]repoMapEntry
+	repoMapMu      sync.Mutex
 
 	analyze     analyzeState
 	reportCache judge.Cache
@@ -100,16 +101,17 @@ const (
 
 func New(cfg Config) *Server {
 	return &Server{
-		cfg:       cfg,
-		adapters:  []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}},
-		traces:    map[string]*model.Trace{},
-		maps:      map[string]*model.CityMap{},
-		cacheAt:   map[string]time.Time{},
-		cacheUsed: map[string]time.Time{},
-		cacheFile: map[string]fileFingerprint{},
-		inflight:  map[string]*inflightLoad{},
-		summaries: map[string]summaryCacheEntry{},
-		repoMaps:  map[string]repoMapEntry{},
+		cfg:            cfg,
+		adapters:       []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}},
+		traces:         map[string]*model.Trace{},
+		maps:           map[string]*model.CityMap{},
+		cacheAt:        map[string]time.Time{},
+		cacheUsed:      map[string]time.Time{},
+		cacheFile:      map[string]fileFingerprint{},
+		inflight:       map[string]*inflightLoad{},
+		summaries:      map[string]summaryCacheEntry{},
+		sessionCatalog: map[string]model.SessionMeta{},
+		repoMaps:       map[string]repoMapEntry{},
 
 		analyze:     analyzeState{jobs: map[string]*analyzeJob{}},
 		reportCache: judge.Cache{Dir: judge.DefaultCacheDir()},
@@ -315,16 +317,21 @@ func (s *Server) listSessionsObserved(fresh bool, observedFreshGen uint64) ([]mo
 	if s.cfg.OpenSession != "" {
 		meta, err := s.summarizeAnyCached(s.cfg.OpenSession, nil)
 		if err == nil {
-			found := false
-			for i := range sessions {
-				if sessions[i].Key == meta.Key {
-					sessions[i] = meta
-					found = true
-					break
+			s.mu.Lock()
+			s.sessionCatalog[meta.Key] = meta
+			s.mu.Unlock()
+			if !meta.Auxiliary {
+				found := false
+				for i := range sessions {
+					if sessions[i].Key == meta.Key {
+						sessions[i] = meta
+						found = true
+						break
+					}
 				}
-			}
-			if !found {
-				sessions = append([]model.SessionMeta{meta}, sessions...)
+				if !found {
+					sessions = append([]model.SessionMeta{meta}, sessions...)
+				}
 			}
 		}
 	}
@@ -364,7 +371,7 @@ func (s *Server) scanSessions() ([]model.SessionMeta, error) {
 			if entry.IsDir() {
 				return nil
 			}
-			if filepath.Ext(path) != ".jsonl" || skipSessionFile(source, path) {
+			if filepath.Ext(path) != ".jsonl" {
 				return nil
 			}
 			info, err := entry.Info()
@@ -414,12 +421,20 @@ func (s *Server) scanSessions() ([]model.SessionMeta, error) {
 		}
 	}
 
+	catalog := make(map[string]model.SessionMeta, len(files))
 	sessions := make([]model.SessionMeta, 0, len(files))
 	for _, meta := range results {
-		if meta != nil && !meta.Auxiliary {
+		if meta == nil {
+			continue
+		}
+		catalog[meta.Key] = *meta
+		if !meta.Auxiliary {
 			sessions = append(sessions, *meta)
 		}
 	}
+	s.mu.Lock()
+	s.sessionCatalog = catalog
+	s.mu.Unlock()
 	s.pruneSummaryCache(seen)
 	return sessions, nil
 }
@@ -720,10 +735,6 @@ func summaryPath(key string) string {
 		return key[idx+1:]
 	}
 	return key
-}
-
-func skipSessionFile(source adapter.Source, path string) bool {
-	return source.Harness() == "claude-code" && strings.HasPrefix(filepath.Base(path), "agent-")
 }
 
 func assignFileIDs(trace *model.Trace, city *model.CityMap) {

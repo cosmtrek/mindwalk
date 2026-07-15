@@ -155,6 +155,35 @@ func TestSummarizeRecognizesUnknownClaudeLineWithSessionID(t *testing.T) {
 	}
 }
 
+func TestSummarizePopulatesSidechainMetadata(t *testing.T) {
+	rootDir := filepath.Join(t.TempDir(), "root-session", "subagents")
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session := filepath.Join(rootDir, "agent-child.jsonl")
+	writeSession(t, session,
+		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"root-session","agentId":"child","isSidechain":true,"cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
+	)
+	if err := os.WriteFile(strings.TrimSuffix(session, ".jsonl")+".meta.json", []byte(`{"agentType":"Explore","description":"Inspect child","toolUseId":"call-child","spawnDepth":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := (Adapter{}).Summarize(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ID != "child" {
+		t.Fatalf("id = %q, want child", meta.ID)
+	}
+	if !meta.Auxiliary || meta.Agent == nil {
+		t.Fatalf("meta = %#v", meta)
+	}
+	if meta.Agent.SourceID != "child" || meta.Agent.RootSessionID != "root-session" || meta.Agent.Depth != 2 ||
+		meta.Agent.Role != "Explore" || meta.Agent.LaunchCallID != "call-child" {
+		t.Fatalf("agent meta = %#v", *meta.Agent)
+	}
+}
+
 func TestSummarizeHandlesLargeJSONLines(t *testing.T) {
 	dir := t.TempDir()
 	session := filepath.Join(dir, "large.jsonl")

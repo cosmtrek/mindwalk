@@ -573,6 +573,48 @@ func TestListSessionsSkipsCodexSubagents(t *testing.T) {
 	}
 }
 
+func TestSummarizePopulatesSubagentMetadata(t *testing.T) {
+	session := filepath.Join(t.TempDir(), "subagent.jsonl")
+	writeJSONL(t, session, map[string]any{
+		"timestamp": "2026-07-10T00:00:01Z",
+		"type":      "session_meta",
+		"payload": map[string]any{
+			"id":            "child-thread",
+			"session_id":    "root-thread",
+			"thread_source": "subagent",
+			"source": map[string]any{
+				"subagent": map[string]any{
+					"thread_spawn": map[string]any{
+						"parent_thread_id": "parent-thread",
+						"depth":            2,
+						"agent_nickname":   "Tesla",
+						"agent_role":       "explorer",
+					},
+				},
+			},
+		},
+	})
+
+	meta, err := (Adapter{}).Summarize(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Auxiliary || meta.Agent == nil {
+		t.Fatalf("meta = %#v", meta)
+	}
+	want := model.AgentSessionMeta{
+		SourceID:        "child-thread",
+		RootSessionID:   "root-thread",
+		ParentSessionID: "parent-thread",
+		Depth:           2,
+		Label:           "Tesla",
+		Role:            "explorer",
+	}
+	if *meta.Agent != want {
+		t.Fatalf("agent meta = %#v, want %#v", *meta.Agent, want)
+	}
+}
+
 func TestSessionMetaPayloadDetectsSubagentFormats(t *testing.T) {
 	tests := []struct {
 		name    string

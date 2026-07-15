@@ -347,16 +347,56 @@ type rawLine struct {
 }
 
 type sessionMetaPayload struct {
-	ID           string          `json:"id"`
-	SessionID    string          `json:"session_id"`
-	Timestamp    string          `json:"timestamp"`
-	Cwd          string          `json:"cwd"`
-	ThreadSource string          `json:"thread_source"`
-	Source       json.RawMessage `json:"source"`
-	Git          struct {
+	ID             string          `json:"id"`
+	SessionID      string          `json:"session_id"`
+	ParentThreadID string          `json:"parent_thread_id"`
+	AgentNickname  string          `json:"agent_nickname"`
+	AgentRole      string          `json:"agent_role"`
+	Timestamp      string          `json:"timestamp"`
+	Cwd            string          `json:"cwd"`
+	ThreadSource   string          `json:"thread_source"`
+	Source         json.RawMessage `json:"source"`
+	Git            struct {
 		Branch     string `json:"branch"`
 		CommitHash string `json:"commit_hash"`
 	} `json:"git"`
+}
+
+func (p sessionMetaPayload) agentMeta() *model.AgentSessionMeta {
+	if !p.isSubagent() {
+		return nil
+	}
+	agent := &model.AgentSessionMeta{
+		SourceID:        p.ID,
+		RootSessionID:   p.SessionID,
+		ParentSessionID: p.ParentThreadID,
+		Label:           p.AgentNickname,
+		Role:            p.AgentRole,
+	}
+	var source struct {
+		Subagent json.RawMessage `json:"subagent"`
+	}
+	var subagent struct {
+		ThreadSpawn struct {
+			ParentThreadID string `json:"parent_thread_id"`
+			Depth          int    `json:"depth"`
+			AgentNickname  string `json:"agent_nickname"`
+			AgentRole      string `json:"agent_role"`
+		} `json:"thread_spawn"`
+	}
+	if json.Unmarshal(p.Source, &source) == nil && json.Unmarshal(source.Subagent, &subagent) == nil {
+		agent.Depth = subagent.ThreadSpawn.Depth
+		if agent.ParentSessionID == "" {
+			agent.ParentSessionID = subagent.ThreadSpawn.ParentThreadID
+		}
+		if agent.Label == "" {
+			agent.Label = subagent.ThreadSpawn.AgentNickname
+		}
+		if agent.Role == "" {
+			agent.Role = subagent.ThreadSpawn.AgentRole
+		}
+	}
+	return agent
 }
 
 func (p sessionMetaPayload) isSubagent() bool {
@@ -469,6 +509,7 @@ func applySessionMeta(meta *model.SessionMeta, payload sessionMetaPayload, setId
 		} else if payload.SessionID != "" {
 			meta.ID = payload.SessionID
 		}
+		meta.Agent = payload.agentMeta()
 	}
 	if payload.Cwd != "" && meta.Cwd == "" {
 		meta.Cwd = payload.Cwd
