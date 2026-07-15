@@ -182,6 +182,14 @@ type sessionListItem struct {
 
 func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/sessions/"), "/")
+	if len(parts) == 2 && parts[1] == "agents" {
+		s.handleSessionAgents(w, r, parts[0])
+		return
+	}
+	if len(parts) == 4 && parts[1] == "agents" && parts[3] == "trace" {
+		s.handleSessionAgentTrace(w, r, parts[0], parts[2])
+		return
+	}
 	if len(parts) != 2 {
 		http.NotFound(w, r)
 		return
@@ -219,6 +227,82 @@ func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *Server) handleSessionAgents(w http.ResponseWriter, r *http.Request, selector string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root, err := s.findSession(selector)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	graph, err := s.agentGraph(root)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, graph)
+}
+
+func (s *Server) handleSessionAgentTrace(w http.ResponseWriter, r *http.Request, selector, nodeID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root, err := s.findSession(selector)
+	if err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	graph, err := s.agentGraph(root)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var node *model.AgentNode
+	for i := range graph.Agents {
+		if graph.Agents[i].ID == nodeID {
+			node = &graph.Agents[i]
+			break
+		}
+	}
+	if node == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	if node.TraceAvailability != model.TraceAvailabilityAvailable {
+		http.Error(w, "agent trace unavailable: "+node.TraceAvailability, http.StatusConflict)
+		return
+	}
+
+	if node.Kind == model.AgentKindMain {
+		trace, _, err := s.traceAndMapMeta(root)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, trace)
+		return
+	}
+	child, err := s.findCatalogSession(node.TraceSessionKey)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, rootCity, err := s.traceAndMapMeta(root)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	trace, _, err := s.traceAndMapMeta(child)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, traceAgainstCity(trace, rootCity))
 }
 
 // handleRepoMap serves the citymap for a repo with no session / trace attached.
@@ -517,6 +601,10 @@ func (s *Server) traceAndMap(selector string) (*model.Trace, *model.CityMap, err
 	if err != nil {
 		return nil, nil, err
 	}
+	return s.traceAndMapMeta(meta)
+}
+
+func (s *Server) traceAndMapMeta(meta model.SessionMeta) (*model.Trace, *model.CityMap, error) {
 	key := meta.Key
 	if key == "" {
 		key = adapter.SessionKey(meta.Harness, meta.Path)
@@ -566,6 +654,32 @@ func (s *Server) traceAndMap(selector string) (*model.Trace, *model.CityMap, err
 		s.runInflight(key, load, meta, fingerprint)
 		return load.trace, load.city, load.err
 	}
+}
+
+func (s *Server) agentGraph(root model.SessionMeta) (*model.AgentGraph, error) {
+	source := s.adapterForHarness(root.Harness)
+	graphSource, ok := source.(adapter.AgentGraphSource)
+	if !ok {
+		return nil, fmt.Errorf("adapter for harness %q does not support agent graphs", root.Harness)
+	}
+	s.mu.Lock()
+	catalog := make([]model.SessionMeta, 0, len(s.sessionCatalog))
+	for _, session := range s.sessionCatalog {
+		catalog = append(catalog, session)
+	}
+	s.mu.Unlock()
+	sort.Slice(catalog, func(i, j int) bool { return catalog[i].Key < catalog[j].Key })
+	return graphSource.BuildAgentGraph(root, catalog)
+}
+
+func (s *Server) findCatalogSession(key string) (model.SessionMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, ok := s.sessionCatalog[key]
+	if !ok {
+		return model.SessionMeta{}, errors.New("session not found")
+	}
+	return meta, nil
 }
 
 // runInflight executes the shared load for key and publishes the result on
@@ -762,12 +876,26 @@ func assignFileIDs(trace *model.Trace, city *model.CityMap) {
 	}
 	for ei := range trace.Events {
 		for ti := range trace.Events[ei].Targets {
+			trace.Events[ei].Targets[ti].FileID = nil
 			if id, ok := ids[trace.Events[ei].Targets[ti].Path]; ok {
 				v := id
 				trace.Events[ei].Targets[ti].FileID = &v
 			}
 		}
 	}
+}
+
+func traceAgainstCity(trace *model.Trace, city *model.CityMap) *model.Trace {
+	clone := *trace
+	clone.Events = append([]model.Event(nil), trace.Events...)
+	for i := range clone.Events {
+		clone.Events[i].Targets = append([]model.Target(nil), trace.Events[i].Targets...)
+		clone.Events[i].Outside = append([]model.OutsideTouch(nil), trace.Events[i].Outside...)
+	}
+	clone.Marks = append([]model.Mark(nil), trace.Marks...)
+	assignFileIDs(&clone, city)
+	clone.Stats = model.ComputeStats(&clone, repoFileCount(city), trace.Stats.Observability.Errors)
+	return &clone
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

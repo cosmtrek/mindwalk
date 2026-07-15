@@ -447,6 +447,112 @@ func TestServerRetainsClaudeSubagentInCatalog(t *testing.T) {
 	}
 }
 
+func TestAgentAPIsAreRootScoped(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+
+	sessions := requestSessions(t, s, "/api/sessions")
+	if len(sessions) != 2 {
+		t.Fatalf("visible sessions = %#v, want two roots", sessions)
+	}
+	for _, session := range sessions {
+		if session.Auxiliary {
+			t.Fatalf("auxiliary session leaked into visible list: %#v", session)
+		}
+	}
+
+	graphResp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents")
+	if graphResp.Code != http.StatusOK {
+		t.Fatalf("graph status = %d body=%q", graphResp.Code, graphResp.Body.String())
+	}
+	var graph model.AgentGraph
+	if err := json.Unmarshal(graphResp.Body.Bytes(), &graph); err != nil {
+		t.Fatal(err)
+	}
+	if graph.RootSessionKey != "root-a" || len(graph.Agents) != 4 || graph.Agents[0].ID != "main-a" {
+		t.Fatalf("graph = %#v", graph)
+	}
+
+	otherGraph := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-b/agents")
+	if otherGraph.Code != http.StatusOK {
+		t.Fatalf("other graph status = %d body=%q", otherGraph.Code, otherGraph.Body.String())
+	}
+
+	mainResp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/main-a/trace")
+	if mainResp.Code != http.StatusOK {
+		t.Fatalf("main trace status = %d body=%q", mainResp.Code, mainResp.Body.String())
+	}
+	var mainTrace model.Trace
+	if err := json.Unmarshal(mainResp.Body.Bytes(), &mainTrace); err != nil {
+		t.Fatal(err)
+	}
+	if mainTrace.Session.ID != "root-a" {
+		t.Fatalf("main trace session = %#v", mainTrace.Session)
+	}
+
+	childResp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/child-a/trace")
+	if childResp.Code != http.StatusOK {
+		t.Fatalf("child trace status = %d body=%q", childResp.Code, childResp.Body.String())
+	}
+	var childTrace model.Trace
+	if err := json.Unmarshal(childResp.Body.Bytes(), &childTrace); err != nil {
+		t.Fatal(err)
+	}
+	if childTrace.Session.ID != "child-a" || childTrace.Stats.FilesInRepo != 2 {
+		t.Fatalf("child trace = %#v", childTrace)
+	}
+	if len(childTrace.Events) != 1 || len(childTrace.Events[0].Targets) != 1 || childTrace.Events[0].Targets[0].FileID == nil {
+		t.Fatalf("child target was not assigned against root city: %#v", childTrace.Events)
+	}
+	_, rootCity, err := s.traceAndMap("root-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFileID := 0
+	for _, file := range rootCity.Files {
+		if file.Path == "b.go" {
+			wantFileID = file.ID
+		}
+	}
+	if got := *childTrace.Events[0].Targets[0].FileID; wantFileID == 0 || got != wantFileID {
+		t.Fatalf("child file id = %d, want root city b.go id %d", got, wantFileID)
+	}
+
+	secondChild := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/child-a/trace")
+	if secondChild.Code != http.StatusOK || source.parses["child-a"] != 1 {
+		t.Fatalf("cached child status=%d parses=%d body=%q", secondChild.Code, source.parses["child-a"], secondChild.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		status int
+		body   string
+	}{
+		{name: "missing trace", method: http.MethodGet, path: "/api/sessions/root-a/agents/missing-a/trace", status: http.StatusConflict, body: "agent trace unavailable: missing"},
+		{name: "failed launch", method: http.MethodGet, path: "/api/sessions/root-a/agents/failed-a/trace", status: http.StatusConflict, body: "agent trace unavailable: unavailable"},
+		{name: "unknown node", method: http.MethodGet, path: "/api/sessions/root-a/agents/unknown/trace", status: http.StatusNotFound, body: "agent not found"},
+		{name: "cross root node", method: http.MethodGet, path: "/api/sessions/root-a/agents/child-b/trace", status: http.StatusNotFound, body: "agent not found"},
+		{name: "graph method", method: http.MethodPost, path: "/api/sessions/root-a/agents", status: http.StatusMethodNotAllowed, body: "method not allowed"},
+		{name: "trace method", method: http.MethodPost, path: "/api/sessions/root-a/agents/child-a/trace", status: http.StatusMethodNotAllowed, body: "method not allowed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := requestSessionResource(t, s, tc.method, tc.path)
+			if resp.Code != tc.status || strings.TrimSpace(resp.Body.String()) != tc.body {
+				t.Fatalf("status=%d body=%q", resp.Code, resp.Body.String())
+			}
+		})
+	}
+}
+
+func TestAuxiliarySessionCannotBeAgentRoot(t *testing.T) {
+	s, _ := newAgentAPIServer(t)
+	resp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/child-a-key/agents")
+	if resp.Code != http.StatusNotFound || strings.TrimSpace(resp.Body.String()) != "session not found" {
+		t.Fatalf("status=%d body=%q", resp.Code, resp.Body.String())
+	}
+}
+
 func TestFreshScanReloadsClaudeSidecarMetadata(t *testing.T) {
 	claudeDir := t.TempDir()
 	root := filepath.Join(claudeDir, "root-id.jsonl")
@@ -698,6 +804,134 @@ func requestSessions(t *testing.T, s *Server, target string) []model.SessionMeta
 		t.Fatal(err)
 	}
 	return sessions
+}
+
+func requestSessionResource(t *testing.T, s *Server, method, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	resp := httptest.NewRecorder()
+	s.handleSessionResource(resp, httptest.NewRequest(method, target, nil))
+	return resp
+}
+
+type agentAPISource struct {
+	dir    string
+	metas  map[string]model.SessionMeta
+	traces map[string]*model.Trace
+	graphs map[string]*model.AgentGraph
+	parses map[string]int
+}
+
+func (s *agentAPISource) Harness() string    { return "agent-api" }
+func (s *agentAPISource) SessionDir() string { return s.dir }
+func (s *agentAPISource) ListSessions() ([]model.SessionMeta, error) {
+	return nil, nil
+}
+
+func (s *agentAPISource) Summarize(path string) (model.SessionMeta, error) {
+	meta, ok := s.metas[filepath.Clean(path)]
+	if !ok {
+		return model.SessionMeta{}, os.ErrNotExist
+	}
+	return meta, nil
+}
+
+func (s *agentAPISource) Parse(path string) (*model.Trace, error) {
+	trace, ok := s.traces[filepath.Clean(path)]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	s.parses[trace.Session.ID]++
+	clone := *trace
+	clone.Events = append([]model.Event(nil), trace.Events...)
+	for i := range clone.Events {
+		clone.Events[i].Targets = append([]model.Target(nil), trace.Events[i].Targets...)
+		clone.Events[i].Outside = append([]model.OutsideTouch(nil), trace.Events[i].Outside...)
+	}
+	clone.Marks = append([]model.Mark(nil), trace.Marks...)
+	return &clone, nil
+}
+
+func (s *agentAPISource) BuildAgentGraph(root model.SessionMeta, _ []model.SessionMeta) (*model.AgentGraph, error) {
+	graph, ok := s.graphs[root.Key]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	clone := *graph
+	clone.Agents = append([]model.AgentNode(nil), graph.Agents...)
+	return &clone, nil
+}
+
+func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
+	t.Helper()
+	dir := t.TempDir()
+	rootRepo := t.TempDir()
+	childRepo := t.TempDir()
+	otherRepo := t.TempDir()
+	for path, content := range map[string]string{
+		filepath.Join(rootRepo, "a.go"):  "package demo\n",
+		filepath.Join(rootRepo, "b.go"):  "package demo\n\nfunc B() {}\n",
+		filepath.Join(childRepo, "b.go"): "package demo\n",
+		filepath.Join(otherRepo, "c.go"): "package other\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	paths := map[string]string{}
+	for _, id := range []string{"root-a", "child-a", "root-b", "child-b"} {
+		paths[id] = filepath.Join(dir, id+".jsonl")
+		writeServerSession(t, paths[id], "{}")
+	}
+	metas := map[string]model.SessionMeta{
+		filepath.Clean(paths["root-a"]): {
+			Key: "root-a", ID: "root-a", Harness: "agent-api", Path: paths["root-a"], Cwd: rootRepo, EventCount: 1,
+		},
+		filepath.Clean(paths["child-a"]): {
+			Key: "child-a-key", ID: "child-a", Harness: "agent-api", Path: paths["child-a"], Cwd: childRepo, EventCount: 1, Auxiliary: true,
+		},
+		filepath.Clean(paths["root-b"]): {
+			Key: "root-b", ID: "root-b", Harness: "agent-api", Path: paths["root-b"], Cwd: otherRepo, EventCount: 1,
+		},
+		filepath.Clean(paths["child-b"]): {
+			Key: "child-b-key", ID: "child-b", Harness: "agent-api", Path: paths["child-b"], Cwd: otherRepo, EventCount: 1, Auxiliary: true,
+		},
+	}
+	traces := map[string]*model.Trace{}
+	for id, target := range map[string]string{
+		"root-a": "a.go", "child-a": "b.go", "root-b": "c.go", "child-b": "c.go",
+	} {
+		meta := metas[filepath.Clean(paths[id])]
+		traces[filepath.Clean(paths[id])] = &model.Trace{
+			Version: 1,
+			Session: model.TraceSession{ID: id, Harness: "agent-api", Cwd: meta.Cwd, Path: meta.Path, EventCount: 1},
+			Events:  []model.Event{{Seq: 0, Tool: "Read", Action: "read", Targets: []model.Target{{Path: target, Touch: "read"}}}},
+			Marks:   []model.Mark{},
+			Stats:   model.ComputeStats(&model.Trace{Events: []model.Event{{Action: "read", Targets: []model.Target{{Path: target, Touch: "read"}}}}}, 1, model.ObservabilityExact),
+		}
+	}
+	graphs := map[string]*model.AgentGraph{
+		"root-a": {
+			Version: model.AgentGraphVersion, RootSessionKey: "root-a",
+			Agents: []model.AgentNode{
+				{ID: "main-a", Kind: model.AgentKindMain, Label: "Main", Status: model.AgentStatusMain, TraceAvailability: model.TraceAvailabilityAvailable, TraceSessionKey: "root-a"},
+				{ID: "child-a", ParentID: "main-a", Depth: 1, Kind: model.AgentKindSubagent, Label: "Child A", Status: model.AgentStatusLaunched, TraceAvailability: model.TraceAvailabilityAvailable, TraceSessionKey: "child-a-key"},
+				{ID: "missing-a", ParentID: "main-a", Depth: 1, Kind: model.AgentKindSubagent, Label: "Missing", Status: model.AgentStatusLaunched, TraceAvailability: model.TraceAvailabilityMissing},
+				{ID: "failed-a", ParentID: "main-a", Depth: 1, Kind: model.AgentKindSubagent, Label: "Failed", Status: model.AgentStatusFailed, TraceAvailability: model.TraceAvailabilityUnavailable},
+			},
+		},
+		"root-b": {
+			Version: model.AgentGraphVersion, RootSessionKey: "root-b",
+			Agents: []model.AgentNode{
+				{ID: "main-b", Kind: model.AgentKindMain, Label: "Main", Status: model.AgentStatusMain, TraceAvailability: model.TraceAvailabilityAvailable, TraceSessionKey: "root-b"},
+				{ID: "child-b", ParentID: "main-b", Depth: 1, Kind: model.AgentKindSubagent, Label: "Child B", Status: model.AgentStatusLaunched, TraceAvailability: model.TraceAvailabilityAvailable, TraceSessionKey: "child-b-key"},
+			},
+		},
+	}
+	source := &agentAPISource{dir: dir, metas: metas, traces: traces, graphs: graphs, parses: map[string]int{}}
+	s := New(Config{})
+	s.adapters = []adapter.Source{source}
+	return s, source
 }
 
 type blockingSource struct {
