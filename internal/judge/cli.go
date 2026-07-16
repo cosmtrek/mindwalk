@@ -149,9 +149,7 @@ func (r CLIRunner) Run(ctx context.Context, prompt, input string) (RunResult, er
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}
-		if len(detail) > 500 {
-			detail = detail[:500]
-		}
+		detail = truncateFailureDetail(detail)
 		return RunResult{}, fmt.Errorf("%s failed: %w: %s", r.CLI, err, detail)
 	}
 	if r.CLI == "claude" {
@@ -164,6 +162,14 @@ func (r CLIRunner) Run(ctx context.Context, prompt, input string) (RunResult, er
 		model = codexModel(stdout.String())
 	}
 	return RunResult{Text: stdout.String(), Model: model}, nil
+}
+
+func truncateFailureDetail(detail string) string {
+	runes := []rune(detail)
+	if len(runes) > 500 {
+		return string(runes[:500])
+	}
+	return detail
 }
 
 func codexExecArgs(workdir string) []string {

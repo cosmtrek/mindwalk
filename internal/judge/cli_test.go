@@ -2,7 +2,9 @@ package judge
 
 import (
 	"slices"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseClaudeEnvelopePicksMainModel(t *testing.T) {
@@ -42,5 +44,18 @@ func TestCodexExecArgsExcludeRemovedFeatures(t *testing.T) {
 	args := codexExecArgs("/tmp/judge")
 	if slices.Contains(args, "browser_use_full_cdp_access") {
 		t.Fatal("codex args include removed browser_use_full_cdp_access feature")
+	}
+}
+
+func TestTruncateFailureDetailPreservesUTF8(t *testing.T) {
+	detail := strings.Repeat("a", 499) + "界tail"
+	got := truncateFailureDetail(detail)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated detail is not valid UTF-8: %q", got)
+	}
+	want := strings.Repeat("a", 499) + "界"
+	if got != want {
+		t.Fatalf("truncated detail = %q, want %q", got, want)
 	}
 }
