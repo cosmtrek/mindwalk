@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindwalk.local/schema/agent-graph.schema.json",
+  "title": "mindwalk agent graph",
+  "type": "object",
+  "required": ["version", "rootSessionKey", "agents"],
+  "properties": {
+    "version": { "const": 1 },
+    "rootSessionKey": { "type": "string", "minLength": 1 },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/agentNode" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "agentNode": {
+      "type": "object",
+      "required": [
+        "id",
+        "depth",
+        "kind",
+        "label",
+        "status",
+        "traceAvailability",
+        "traceEventCount",
+        "linkQuality",
+        "linkMethod"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "parentId": { "type": "string", "minLength": 1 },
+        "depth": { "type": "integer", "minimum": 0 },
+        "kind": { "enum": ["main", "subagent"] },
+        "label": { "type": "string", "minLength": 1 },
+        "role": { "type": "string" },
+        "instructionPreview": { "type": "string", "maxLength": 240 },
+        "launchSeq": { "type": "integer", "minimum": 0 },
+        "launchCallId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["main", "launched", "failed", "unknown"] },
+        "traceAvailability": { "enum": ["available", "missing", "unavailable"] },
+        "traceSessionKey": { "type": "string", "minLength": 1 },
+        "traceEventCount": { "type": "integer", "minimum": 0 },
+        "linkQuality": { "enum": ["exact", "derived", "unavailable"] },
+        "linkMethod": {
+          "enum": [
+            "root",
+            "codex-agent-id",
+            "codex-parent-thread-id",
+            "claude-tool-use-id",
+            "claude-subagents-directory",
+            "unavailable"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
