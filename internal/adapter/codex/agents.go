@@ -32,6 +32,41 @@ type codexGraphActor struct {
 	sourceID string
 }
 
+func (a Adapter) AgentGraphInputs(root model.SessionMeta, catalog []model.SessionMeta) ([]string, error) {
+	paths := map[string]bool{root.Path: true}
+	childrenByParent := make(map[string][]model.SessionMeta)
+	for _, session := range catalog {
+		if session.Agent == nil || session.Agent.ParentSessionID == "" || session.Harness != a.Harness() {
+			continue
+		}
+		childrenByParent[session.Agent.ParentSessionID] = append(childrenByParent[session.Agent.ParentSessionID], session)
+	}
+
+	visitedSessions := map[string]bool{root.Key: true}
+	queue := []string{root.ID}
+	for len(queue) > 0 {
+		parentID := queue[0]
+		queue = queue[1:]
+		for _, child := range childrenByParent[parentID] {
+			if visitedSessions[child.Key] {
+				continue
+			}
+			visitedSessions[child.Key] = true
+			paths[child.Path] = true
+			queue = append(queue, codexSessionSourceID(child))
+		}
+	}
+
+	inputs := make([]string, 0, len(paths))
+	for path := range paths {
+		if path != "" {
+			inputs = append(inputs, path)
+		}
+	}
+	sort.Strings(inputs)
+	return inputs, nil
+}
+
 func (a Adapter) BuildAgentGraph(root model.SessionMeta, catalog []model.SessionMeta) (*model.AgentGraph, error) {
 	mainID := adapter.AgentNodeID(a.Harness(), root.Key, "root:"+root.Key)
 	graph := &model.AgentGraph{

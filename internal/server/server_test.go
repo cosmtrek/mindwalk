@@ -725,6 +725,89 @@ func TestAuxiliarySessionCannotBeAgentRoot(t *testing.T) {
 	}
 }
 
+func TestAgentGraphCacheReusesMatchingFingerprint(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+	root := requestSessions(t, s, "/api/sessions")[0]
+
+	first, err := s.agentGraph(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.agentGraph(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("matching graph fingerprint did not reuse the cached graph")
+	}
+	if got := source.graphBuilds.Load(); got != 1 {
+		t.Fatalf("graph builds = %d, want 1", got)
+	}
+}
+
+func TestAgentGraphInflightSharesEightConcurrentBuilds(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+	root := requestSessions(t, s, "/api/sessions")[0]
+	source.graphStarted = make(chan struct{})
+	source.graphRelease = make(chan struct{})
+
+	results := make(chan error, 8)
+	for range 8 {
+		go func() {
+			_, err := s.agentGraph(root)
+			results <- err
+		}()
+	}
+	<-source.graphStarted
+	close(source.graphRelease)
+	for range 8 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := source.graphBuilds.Load(); got != 1 {
+		t.Fatalf("concurrent graph builds = %d, want 1", got)
+	}
+}
+
+func TestAgentGraphCacheRebuildsWhenInputChanges(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+	root := requestSessions(t, s, "/api/sessions")[0]
+
+	if _, err := s.agentGraph(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.agentGraph(root); err != nil {
+		t.Fatal(err)
+	}
+	appendServerSession(t, root.Path, "changed")
+	if _, err := s.agentGraph(root); err != nil {
+		t.Fatal(err)
+	}
+	if got := source.graphBuilds.Load(); got != 2 {
+		t.Fatalf("graph builds after input change = %d, want 2", got)
+	}
+}
+
+func TestFreshScanInvalidatesAgentGraphCache(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+	root := requestSessions(t, s, "/api/sessions")[0]
+
+	if _, err := s.agentGraph(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.agentGraph(root); err != nil {
+		t.Fatal(err)
+	}
+	requestSessions(t, s, "/api/sessions?fresh=1")
+	if _, err := s.agentGraph(root); err != nil {
+		t.Fatal(err)
+	}
+	if got := source.graphBuilds.Load(); got != 2 {
+		t.Fatalf("graph builds after fresh scan = %d, want 2", got)
+	}
+}
+
 func TestFreshScanReloadsClaudeSidecarMetadata(t *testing.T) {
 	claudeDir := t.TempDir()
 	root := filepath.Join(claudeDir, "root-id.jsonl")
@@ -986,11 +1069,14 @@ func requestSessionResource(t *testing.T, s *Server, method, target string) *htt
 }
 
 type agentAPISource struct {
-	dir    string
-	metas  map[string]model.SessionMeta
-	traces map[string]*model.Trace
-	graphs map[string]*model.AgentGraph
-	parses map[string]int
+	dir          string
+	metas        map[string]model.SessionMeta
+	traces       map[string]*model.Trace
+	graphs       map[string]*model.AgentGraph
+	parses       map[string]int
+	graphBuilds  atomic.Int32
+	graphStarted chan struct{}
+	graphRelease chan struct{}
 }
 
 func (s *agentAPISource) Harness() string    { return "agent-api" }
@@ -1024,6 +1110,11 @@ func (s *agentAPISource) Parse(path string) (*model.Trace, error) {
 }
 
 func (s *agentAPISource) BuildAgentGraph(root model.SessionMeta, _ []model.SessionMeta) (*model.AgentGraph, error) {
+	build := s.graphBuilds.Add(1)
+	if build == 1 && s.graphStarted != nil {
+		close(s.graphStarted)
+		<-s.graphRelease
+	}
 	graph, ok := s.graphs[root.Key]
 	if !ok {
 		return nil, os.ErrNotExist
@@ -1031,6 +1122,10 @@ func (s *agentAPISource) BuildAgentGraph(root model.SessionMeta, _ []model.Sessi
 	clone := *graph
 	clone.Agents = append([]model.AgentNode(nil), graph.Agents...)
 	return &clone, nil
+}
+
+func (s *agentAPISource) AgentGraphInputs(root model.SessionMeta, _ []model.SessionMeta) ([]string, error) {
+	return []string{root.Path}, nil
 }
 
 func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {

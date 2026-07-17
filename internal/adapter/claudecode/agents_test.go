@@ -269,6 +269,33 @@ func TestClaudeAgentGraphUsesStablePreorder(t *testing.T) {
 	}
 }
 
+func TestClaudeAgentGraphInputsIncludeChildTracesAndSidecars(t *testing.T) {
+	fixture := newClaudeAgentFixture(t, nil)
+	child := fixture.addChild(t, "agent-child", []any{
+		claudeSidechainUser("root-id", "child-id", "child prompt"),
+	}, claudeChildMeta{Description: "Child", ToolUseID: "call-child", SpawnDepth: 1})
+	fixture.addMetaOnly(t, "agent-missing", claudeChildMeta{Description: "Missing", ToolUseID: "call-missing"})
+
+	inputs, err := fixture.adapter.AgentGraphInputs(fixture.root, fixture.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		fixture.root.Path: true,
+		child.Path:        true,
+		filepath.Join(fixture.subagentsDir, "agent-child.meta.json"):   true,
+		filepath.Join(fixture.subagentsDir, "agent-missing.meta.json"): true,
+	}
+	if len(inputs) != len(want) {
+		t.Fatalf("graph inputs = %v, want %v", inputs, want)
+	}
+	for _, path := range inputs {
+		if !want[path] {
+			t.Fatalf("unexpected graph input %q in %v", path, inputs)
+		}
+	}
+}
+
 type claudeAgentFixture struct {
 	adapter      Adapter
 	root         model.SessionMeta

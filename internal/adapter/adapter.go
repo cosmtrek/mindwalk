@@ -26,6 +26,7 @@ type Source interface {
 }
 
 type AgentGraphSource interface {
+	AgentGraphInputs(root model.SessionMeta, catalog []model.SessionMeta) ([]string, error)
 	BuildAgentGraph(root model.SessionMeta, catalog []model.SessionMeta) (*model.AgentGraph, error)
 }
 

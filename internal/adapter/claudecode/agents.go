@@ -36,6 +36,26 @@ type claudeAgentArtifact struct {
 	depth    int
 }
 
+func (a Adapter) AgentGraphInputs(root model.SessionMeta, _ []model.SessionMeta) ([]string, error) {
+	inputs := []string{root.Path}
+	subagentsDir := filepath.Join(filepath.Dir(root.Path), root.ID, "subagents")
+	entries, err := os.ReadDir(subagentsDir)
+	if os.IsNotExist(err) {
+		return inputs, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".jsonl") && !strings.HasSuffix(entry.Name(), ".meta.json")) {
+			continue
+		}
+		inputs = append(inputs, filepath.Join(subagentsDir, entry.Name()))
+	}
+	sort.Strings(inputs)
+	return inputs, nil
+}
+
 func (a Adapter) BuildAgentGraph(root model.SessionMeta, catalog []model.SessionMeta) (*model.AgentGraph, error) {
 	mainID := adapter.AgentNodeID(a.Harness(), root.Key, "root:"+root.Key)
 	graph := &model.AgentGraph{

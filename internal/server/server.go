@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -43,23 +44,25 @@ type Config struct {
 }
 
 type Server struct {
-	cfg            Config
-	adapters       []adapter.Source
-	mu             sync.Mutex
-	scanMu         sync.Mutex
-	sessions       []model.SessionMeta
-	sessionCatalog map[string]model.SessionMeta
-	sessionAt      time.Time
-	freshGen       uint64
-	traces         map[string]*model.Trace
-	maps           map[string]*model.CityMap
-	cacheAt        map[string]time.Time
-	cacheUsed      map[string]time.Time
-	cacheFile      map[string]fileFingerprint
-	inflight       map[string]*inflightLoad
-	summaries      map[string]summaryCacheEntry
-	repoMaps       map[string]repoMapEntry
-	repoMapMu      sync.Mutex
+	cfg             Config
+	adapters        []adapter.Source
+	mu              sync.Mutex
+	scanMu          sync.Mutex
+	sessions        []model.SessionMeta
+	sessionCatalog  map[string]model.SessionMeta
+	sessionAt       time.Time
+	freshGen        uint64
+	traces          map[string]*model.Trace
+	maps            map[string]*model.CityMap
+	cacheAt         map[string]time.Time
+	cacheUsed       map[string]time.Time
+	cacheFile       map[string]fileFingerprint
+	inflight        map[string]*inflightLoad
+	agentGraphs     map[string]agentGraphCacheEntry
+	agentGraphLoads map[string]*inflightAgentGraph
+	summaries       map[string]summaryCacheEntry
+	repoMaps        map[string]repoMapEntry
+	repoMapMu       sync.Mutex
 
 	analyze     analyzeState
 	reportCache judge.Cache
@@ -83,6 +86,23 @@ type fileFingerprint struct {
 	modTime time.Time
 }
 
+type agentGraphFingerprint struct {
+	digest   [sha256.Size]byte
+	freshGen uint64
+}
+
+type agentGraphCacheEntry struct {
+	fingerprint agentGraphFingerprint
+	graph       *model.AgentGraph
+}
+
+type inflightAgentGraph struct {
+	done        chan struct{}
+	fingerprint agentGraphFingerprint
+	graph       *model.AgentGraph
+	err         error
+}
+
 type summaryCacheEntry struct {
 	size          int64
 	modTime       time.Time
@@ -103,17 +123,19 @@ const (
 
 func New(cfg Config) *Server {
 	return &Server{
-		cfg:            cfg,
-		adapters:       []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}},
-		traces:         map[string]*model.Trace{},
-		maps:           map[string]*model.CityMap{},
-		cacheAt:        map[string]time.Time{},
-		cacheUsed:      map[string]time.Time{},
-		cacheFile:      map[string]fileFingerprint{},
-		inflight:       map[string]*inflightLoad{},
-		summaries:      map[string]summaryCacheEntry{},
-		sessionCatalog: map[string]model.SessionMeta{},
-		repoMaps:       map[string]repoMapEntry{},
+		cfg:             cfg,
+		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}},
+		traces:          map[string]*model.Trace{},
+		maps:            map[string]*model.CityMap{},
+		cacheAt:         map[string]time.Time{},
+		cacheUsed:       map[string]time.Time{},
+		cacheFile:       map[string]fileFingerprint{},
+		inflight:        map[string]*inflightLoad{},
+		agentGraphs:     map[string]agentGraphCacheEntry{},
+		agentGraphLoads: map[string]*inflightAgentGraph{},
+		summaries:       map[string]summaryCacheEntry{},
+		sessionCatalog:  map[string]model.SessionMeta{},
+		repoMaps:        map[string]repoMapEntry{},
 
 		analyze:     analyzeState{jobs: map[string]*analyzeJob{}},
 		reportCache: judge.Cache{Dir: judge.DefaultCacheDir()},
@@ -429,6 +451,7 @@ func (s *Server) listSessionsObserved(fresh bool, observedFreshGen uint64) ([]mo
 	s.sessionAt = time.Now()
 	if fresh {
 		s.freshGen++
+		clear(s.agentGraphs)
 	}
 	s.mu.Unlock()
 	return sessions, nil
@@ -662,14 +685,92 @@ func (s *Server) agentGraph(root model.SessionMeta) (*model.AgentGraph, error) {
 	if !ok {
 		return nil, fmt.Errorf("adapter for harness %q does not support agent graphs", root.Harness)
 	}
-	s.mu.Lock()
-	catalog := make([]model.SessionMeta, 0, len(s.sessionCatalog))
-	for _, session := range s.sessionCatalog {
-		catalog = append(catalog, session)
+	for {
+		s.mu.Lock()
+		catalog := make([]model.SessionMeta, 0, len(s.sessionCatalog))
+		for _, session := range s.sessionCatalog {
+			catalog = append(catalog, session)
+		}
+		freshGen := s.freshGen
+		s.mu.Unlock()
+		sort.Slice(catalog, func(i, j int) bool { return catalog[i].Key < catalog[j].Key })
+
+		inputs, err := graphSource.AgentGraphInputs(root, catalog)
+		if err != nil {
+			return nil, err
+		}
+		fingerprint, err := fingerprintAgentGraphInputs(inputs, freshGen)
+		if err != nil {
+			return nil, err
+		}
+
+		s.mu.Lock()
+		if cached, ok := s.agentGraphs[root.Key]; ok && cached.fingerprint == fingerprint {
+			s.mu.Unlock()
+			return cached.graph, nil
+		}
+		if load := s.agentGraphLoads[root.Key]; load != nil {
+			done := load.done
+			shareSnapshot := load.fingerprint == fingerprint
+			s.mu.Unlock()
+			<-done
+			if shareSnapshot {
+				return load.graph, load.err
+			}
+			continue
+		}
+		load := &inflightAgentGraph{done: make(chan struct{}), fingerprint: fingerprint}
+		s.agentGraphLoads[root.Key] = load
+		s.mu.Unlock()
+
+		s.runAgentGraphInflight(root.Key, load, graphSource, root, catalog)
+		return load.graph, load.err
 	}
-	s.mu.Unlock()
-	sort.Slice(catalog, func(i, j int) bool { return catalog[i].Key < catalog[j].Key })
-	return graphSource.BuildAgentGraph(root, catalog)
+}
+
+func fingerprintAgentGraphInputs(paths []string, freshGen uint64) (agentGraphFingerprint, error) {
+	paths = append([]string(nil), paths...)
+	sort.Strings(paths)
+	var material strings.Builder
+	fmt.Fprintf(&material, "fresh:%d\n", freshGen)
+	previous := ""
+	for _, path := range paths {
+		path = filepath.Clean(path)
+		if path == previous {
+			continue
+		}
+		previous = path
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			fmt.Fprintf(&material, "%s\x00missing\n", path)
+			continue
+		}
+		if err != nil {
+			return agentGraphFingerprint{}, err
+		}
+		fmt.Fprintf(&material, "%s\x00%d\x00%d\n", path, info.Size(), info.ModTime().UnixNano())
+	}
+	return agentGraphFingerprint{digest: sha256.Sum256([]byte(material.String())), freshGen: freshGen}, nil
+}
+
+func (s *Server) runAgentGraphInflight(key string, load *inflightAgentGraph, source adapter.AgentGraphSource, root model.SessionMeta, catalog []model.SessionMeta) {
+	defer func() {
+		if r := recover(); r != nil {
+			load.graph = nil
+			load.err = fmt.Errorf("build agent graph %s: %v", key, r)
+			log.Printf("mindwalk: panic building agent graph %s: %v\n%s", key, r, debug.Stack())
+		}
+		s.mu.Lock()
+		if load.err == nil {
+			s.agentGraphs[key] = agentGraphCacheEntry{fingerprint: load.fingerprint, graph: load.graph}
+		}
+		if s.agentGraphLoads[key] == load {
+			delete(s.agentGraphLoads, key)
+		}
+		close(load.done)
+		s.mu.Unlock()
+	}()
+	load.graph, load.err = source.BuildAgentGraph(root, catalog)
 }
 
 func (s *Server) findCatalogSession(key string) (model.SessionMeta, error) {

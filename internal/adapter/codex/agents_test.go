@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 
 	baseadapter "github.com/cosmtrek/mindwalk/internal/adapter"
@@ -468,6 +469,24 @@ func TestCodexAgentGraphUsesStablePreorder(t *testing.T) {
 	want := []string{"Main", "A", "A1", "B"}
 	if !reflect.DeepEqual(labels, want) {
 		t.Fatalf("agent order = %v, want %v", labels, want)
+	}
+}
+
+func TestCodexAgentGraphInputsIncludeNestedChildren(t *testing.T) {
+	fixture := newCodexAgentFixture(t, nil,
+		codexAgentChildFixture{id: "agent-a", parentID: "root-session", depth: 1, label: "A"},
+		codexAgentChildFixture{id: "agent-a1", parentID: "agent-a", depth: 2, label: "A1"},
+		codexAgentChildFixture{id: "unrelated", parentID: "other-root", depth: 1, label: "Other"},
+	)
+
+	inputs, err := fixture.adapter.AgentGraphInputs(fixture.root, fixture.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{fixture.root.Path, fixture.catalog[0].Path, fixture.catalog[1].Path}
+	sort.Strings(want)
+	if !reflect.DeepEqual(inputs, want) {
+		t.Fatalf("graph inputs = %v, want %v", inputs, want)
 	}
 }
 
