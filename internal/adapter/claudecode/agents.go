@@ -80,10 +80,15 @@ func (a Adapter) BuildAgentGraph(root model.SessionMeta, catalog []model.Session
 		}
 		for _, launch := range actorLaunches {
 			launch.owner = artifact
-			launches = append(launches, launch)
-			if _, exists := launchByCallID[launch.callID]; !exists {
-				launchByCallID[launch.callID] = launch
+			if existing := launchByCallID[launch.callID]; existing != nil {
+				if !existing.resultObserved && launch.resultObserved {
+					existing.resultObserved = true
+					existing.resultError = launch.resultError
+				}
+				continue
 			}
+			launchByCallID[launch.callID] = launch
+			launches = append(launches, launch)
 		}
 	}
 
@@ -98,24 +103,22 @@ func (a Adapter) BuildAgentGraph(root model.SessionMeta, catalog []model.Session
 		resolveClaudeArtifactDepth(artifact, launchByCallID, map[*claudeAgentArtifact]bool{})
 	}
 
-	matchedLaunches := make(map[*claudeAgentLaunch]bool)
+	matchedLaunches := make(map[string]bool)
 	for _, artifact := range artifacts {
 		node, launch := claudeArtifactNode(root.Key, mainID, artifact, launchByCallID)
 		graph.Agents = append(graph.Agents, node)
 		if launch != nil {
-			matchedLaunches[launch] = true
+			matchedLaunches[launch.callID] = true
 		}
 	}
 	for _, launch := range launches {
-		if matchedLaunches[launch] {
+		if matchedLaunches[launch.callID] {
 			continue
 		}
 		graph.Agents = append(graph.Agents, unlinkedClaudeLaunchNode(a.Harness(), root.Key, mainID, launch))
 	}
 
-	sort.Slice(graph.Agents, func(i, j int) bool {
-		return claudeAgentNodeLess(graph.Agents[i], graph.Agents[j])
-	})
+	graph.Agents = adapter.OrderAgentNodesPreorder(graph.Agents)
 	return graph, nil
 }
 
@@ -361,23 +364,4 @@ func claudeLaunchInput(launch *claudeAgentLaunch, key string) string {
 	}
 	value, _ := launch.input[key].(string)
 	return value
-}
-
-func claudeAgentNodeLess(left, right model.AgentNode) bool {
-	if left.Kind == model.AgentKindMain || right.Kind == model.AgentKindMain {
-		return left.Kind == model.AgentKindMain && right.Kind != model.AgentKindMain
-	}
-	if left.Depth != right.Depth {
-		return left.Depth < right.Depth
-	}
-	if (left.LaunchSeq == nil) != (right.LaunchSeq == nil) {
-		return left.LaunchSeq != nil
-	}
-	if left.LaunchSeq != nil && *left.LaunchSeq != *right.LaunchSeq {
-		return *left.LaunchSeq < *right.LaunchSeq
-	}
-	if left.Label != right.Label {
-		return left.Label < right.Label
-	}
-	return left.ID < right.ID
 }

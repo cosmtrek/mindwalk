@@ -55,6 +55,7 @@ type AgentSessionMeta struct {
 	SourceID        string
 	RootSessionID   string
 	ParentSessionID string
+	AgentPath       string
 	Depth           int
 	Label           string
 	Role            string

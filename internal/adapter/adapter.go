@@ -60,11 +60,74 @@ func AgentNodeID(harness, rootSessionKey, actorIdentity string) string {
 
 func AgentInstructionPreview(text string) string {
 	text = strings.Join(strings.Fields(text), " ")
-	runes := []rune(text)
-	if len(runes) <= 240 {
-		return text
+	return textutil.TruncateRunes(text, 240, "…")
+}
+
+// OrderAgentNodesPreorder keeps every parent's complete subtree contiguous.
+// Adapter-specific graph builders provide parent links and launch sequence;
+// this helper owns only their shared deterministic presentation order.
+func OrderAgentNodesPreorder(nodes []model.AgentNode) []model.AgentNode {
+	known := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		known[node.ID] = true
 	}
-	return string(runes[:239]) + "…"
+
+	children := make(map[string][]model.AgentNode)
+	roots := make([]model.AgentNode, 0, 1)
+	for _, node := range nodes {
+		if node.Kind == model.AgentKindMain || node.ParentID == "" || !known[node.ParentID] {
+			roots = append(roots, node)
+			continue
+		}
+		children[node.ParentID] = append(children[node.ParentID], node)
+	}
+	sortAgentNodeSiblings(roots)
+	for parentID := range children {
+		sortAgentNodeSiblings(children[parentID])
+	}
+
+	ordered := make([]model.AgentNode, 0, len(nodes))
+	visited := make(map[string]bool, len(nodes))
+	var visit func(model.AgentNode)
+	visit = func(node model.AgentNode) {
+		if visited[node.ID] {
+			return
+		}
+		visited[node.ID] = true
+		ordered = append(ordered, node)
+		for _, child := range children[node.ID] {
+			visit(child)
+		}
+	}
+	for _, root := range roots {
+		visit(root)
+	}
+
+	remaining := append([]model.AgentNode(nil), nodes...)
+	sortAgentNodeSiblings(remaining)
+	for _, node := range remaining {
+		visit(node)
+	}
+	return ordered
+}
+
+func sortAgentNodeSiblings(nodes []model.AgentNode) {
+	sort.Slice(nodes, func(i, j int) bool {
+		left, right := nodes[i], nodes[j]
+		if left.Kind == model.AgentKindMain || right.Kind == model.AgentKindMain {
+			return left.Kind == model.AgentKindMain && right.Kind != model.AgentKindMain
+		}
+		if (left.LaunchSeq == nil) != (right.LaunchSeq == nil) {
+			return left.LaunchSeq != nil
+		}
+		if left.LaunchSeq != nil && *left.LaunchSeq != *right.LaunchSeq {
+			return *left.LaunchSeq < *right.LaunchSeq
+		}
+		if left.Label != right.Label {
+			return left.Label < right.Label
+		}
+		return left.ID < right.ID
+	})
 }
 
 // userMessageNoteLimit bounds the text stored on user-message marks; the note

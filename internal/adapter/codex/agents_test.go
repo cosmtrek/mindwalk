@@ -12,12 +12,13 @@ import (
 )
 
 type codexAgentChildFixture struct {
-	id       string
-	parentID string
-	depth    int
-	label    string
-	role     string
-	lines    []any
+	id        string
+	parentID  string
+	depth     int
+	agentPath string
+	label     string
+	role      string
+	lines     []any
 }
 
 type codexAgentFixture struct {
@@ -394,6 +395,82 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 	}
 }
 
+func TestCodexAgentGraphLegacyTaskNameMergesDerivedChild(t *testing.T) {
+	fixture := newCodexAgentFixture(t, []any{
+		call("", "fc-legacy", "call-legacy", "spawn_agent", map[string]any{
+			"message": "review the legacy trace",
+		}),
+		output("", "call-legacy", `{"task_name":"/root/legacy-review"}`),
+	}, codexAgentChildFixture{
+		id:        "legacy-child",
+		parentID:  "root-session",
+		depth:     1,
+		agentPath: "/root/legacy-review",
+		label:     "Legacy Reviewer",
+	})
+
+	graph, err := fixture.adapter.BuildAgentGraph(fixture.root, fixture.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Agents) != 2 {
+		t.Fatalf("agents = %#v, want Main plus one merged legacy child", graph.Agents)
+	}
+	node := graph.Agents[1]
+	if node.Label != "Legacy Reviewer" || node.LaunchCallID != "call-legacy" ||
+		node.Status != model.AgentStatusLaunched || node.TraceAvailability != model.TraceAvailabilityAvailable ||
+		node.TraceSessionKey != fixture.catalog[0].Key {
+		t.Fatalf("legacy node = %#v", node)
+	}
+}
+
+func TestCodexAgentGraphUnknownJSONObjectIsNotFailure(t *testing.T) {
+	fixture := newCodexAgentFixture(t, []any{
+		call("", "fc-unknown-shape", "call-unknown-shape", "spawn_agent", map[string]any{"message": "try it"}),
+		output("", "call-unknown-shape", `{"message":"accepted"}`),
+	})
+
+	graph, err := fixture.adapter.BuildAgentGraph(fixture.root, fixture.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Agents) != 2 || graph.Agents[1].Status != model.AgentStatusUnknown {
+		t.Fatalf("unknown output node = %#v", graph.Agents)
+	}
+}
+
+func TestCodexAgentGraphUsesStablePreorder(t *testing.T) {
+	fixture := newCodexAgentFixture(t, []any{
+		call("", "fc-a", "call-a", "spawn_agent", map[string]any{"message": "A"}),
+		output("", "call-a", `{"agent_id":"agent-a"}`),
+		call("", "fc-b", "call-b", "spawn_agent", map[string]any{"message": "B"}),
+		output("", "call-b", `{"agent_id":"agent-b"}`),
+	},
+		codexAgentChildFixture{
+			id: "agent-a", parentID: "root-session", depth: 1, label: "A",
+			lines: []any{
+				call("", "fc-a1", "call-a1", "spawn_agent", map[string]any{"message": "A1"}),
+				output("", "call-a1", `{"agent_id":"agent-a1"}`),
+			},
+		},
+		codexAgentChildFixture{id: "agent-b", parentID: "root-session", depth: 1, label: "B"},
+		codexAgentChildFixture{id: "agent-a1", parentID: "agent-a", depth: 2, label: "A1"},
+	)
+
+	graph, err := fixture.adapter.BuildAgentGraph(fixture.root, fixture.catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels := make([]string, len(graph.Agents))
+	for i, node := range graph.Agents {
+		labels[i] = node.Label
+	}
+	want := []string{"Main", "A", "A1", "B"}
+	if !reflect.DeepEqual(labels, want) {
+		t.Fatalf("agent order = %v, want %v", labels, want)
+	}
+}
+
 func newCodexAgentFixture(t *testing.T, rootLines []any, children ...codexAgentChildFixture) codexAgentFixture {
 	t.Helper()
 	dir := t.TempDir()
@@ -440,6 +517,7 @@ func codexChildSessionMeta(child codexAgentChildFixture) map[string]any {
 					"thread_spawn": map[string]any{
 						"parent_thread_id": child.parentID,
 						"depth":            child.depth,
+						"agent_path":       child.agentPath,
 						"agent_nickname":   child.label,
 						"agent_role":       child.role,
 					},

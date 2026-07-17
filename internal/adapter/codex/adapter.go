@@ -350,6 +350,7 @@ type sessionMetaPayload struct {
 	ID             string          `json:"id"`
 	SessionID      string          `json:"session_id"`
 	ParentThreadID string          `json:"parent_thread_id"`
+	AgentPath      string          `json:"agent_path"`
 	AgentNickname  string          `json:"agent_nickname"`
 	AgentRole      string          `json:"agent_role"`
 	Timestamp      string          `json:"timestamp"`
@@ -370,6 +371,7 @@ func (p sessionMetaPayload) agentMeta() *model.AgentSessionMeta {
 		SourceID:        p.ID,
 		RootSessionID:   p.SessionID,
 		ParentSessionID: p.ParentThreadID,
+		AgentPath:       p.AgentPath,
 		Label:           p.AgentNickname,
 		Role:            p.AgentRole,
 	}
@@ -380,12 +382,16 @@ func (p sessionMetaPayload) agentMeta() *model.AgentSessionMeta {
 		ThreadSpawn struct {
 			ParentThreadID string `json:"parent_thread_id"`
 			Depth          int    `json:"depth"`
+			AgentPath      string `json:"agent_path"`
 			AgentNickname  string `json:"agent_nickname"`
 			AgentRole      string `json:"agent_role"`
 		} `json:"thread_spawn"`
 	}
 	if json.Unmarshal(p.Source, &source) == nil && json.Unmarshal(source.Subagent, &subagent) == nil {
 		agent.Depth = subagent.ThreadSpawn.Depth
+		if agent.AgentPath == "" {
+			agent.AgentPath = subagent.ThreadSpawn.AgentPath
+		}
 		if agent.ParentSessionID == "" {
 			agent.ParentSessionID = subagent.ThreadSpawn.ParentThreadID
 		}

@@ -213,6 +213,62 @@ func TestClaudeAgentGraphSuccessfulResultWithoutArtifactStaysUnknown(t *testing.
 	}
 }
 
+func TestClaudeAgentGraphDuplicateCallIDProducesOneNode(t *testing.T) {
+	fixture := newClaudeAgentFixture(t, []any{
+		claudeToolUse("root-id", "call-shared", "Agent", map[string]any{
+			"description": "Shared", "subagent_type": "Explore", "prompt": "inspect",
+		}),
+	})
+	fixture.addChild(t, "agent-shared", []any{
+		claudeSidechainUser("root-id", "shared-id", "child prompt"),
+		claudeToolUseForAgent("root-id", "shared-id", "call-shared", "Agent", map[string]any{
+			"description": "Duplicate transcript entry", "prompt": "inspect",
+		}),
+	}, claudeChildMeta{Description: "Shared", ToolUseID: "call-shared", SpawnDepth: 1})
+
+	graph := fixture.build(t)
+	if len(graph.Agents) != 2 {
+		t.Fatalf("agents = %#v, want Main plus one shared-call node", graph.Agents)
+	}
+	if graph.Agents[1].Label != "Shared" || graph.Agents[1].TraceAvailability != model.TraceAvailabilityAvailable {
+		t.Fatalf("shared node = %#v", graph.Agents[1])
+	}
+}
+
+func TestClaudeAgentGraphUsesStablePreorder(t *testing.T) {
+	fixture := newClaudeAgentFixture(t, []any{
+		claudeToolUse("root-id", "call-a", "Agent", map[string]any{"description": "A", "prompt": "A"}),
+		claudeToolUse("root-id", "call-b", "Agent", map[string]any{"description": "B", "prompt": "B"}),
+	})
+	fixture.addChild(t, "agent-a", []any{
+		claudeSidechainUser("root-id", "a-id", "A child"),
+		claudeToolUseForAgent("root-id", "a-id", "call-a1", "Agent", map[string]any{
+			"description": "A1", "prompt": "A1",
+		}),
+	}, claudeChildMeta{Description: "A", ToolUseID: "call-a", SpawnDepth: 1})
+	fixture.addChild(t, "agent-b", []any{
+		claudeSidechainUser("root-id", "b-id", "B child"),
+	}, claudeChildMeta{Description: "B", ToolUseID: "call-b", SpawnDepth: 1})
+	fixture.addChild(t, "agent-a1", []any{
+		claudeSidechainUser("root-id", "a1-id", "A1 child"),
+	}, claudeChildMeta{Description: "A1", ToolUseID: "call-a1", SpawnDepth: 2})
+
+	graph := fixture.build(t)
+	labels := make([]string, len(graph.Agents))
+	for i, node := range graph.Agents {
+		labels[i] = node.Label
+	}
+	want := []string{"Main", "A", "A1", "B"}
+	if len(labels) != len(want) {
+		t.Fatalf("agent order = %v, want %v", labels, want)
+	}
+	for i := range want {
+		if labels[i] != want[i] {
+			t.Fatalf("agent order = %v, want %v", labels, want)
+		}
+	}
+}
+
 type claudeAgentFixture struct {
 	adapter      Adapter
 	root         model.SessionMeta
