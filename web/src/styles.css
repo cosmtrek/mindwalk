@@ -1961,10 +1961,16 @@ dd {
 }
 
 .agent-row-detail {
-  display: none;
+  position: absolute;
+  z-index: 4;
+  top: calc(100% - 2px);
+  left: 24px;
+  display: grid;
   min-width: 0;
-  width: 100%;
+  width: calc(100% - 32px);
+  max-width: calc(100% - 32px);
   gap: 5px;
+  visibility: hidden;
   padding: 8px 10px;
   border: 1px solid var(--hairline-strong);
   border-radius: 4px;
@@ -1972,14 +1978,19 @@ dd {
   color: var(--muted);
   font-size: var(--text-xs);
   line-height: 1.45;
+  opacity: 0;
   overflow-wrap: anywhere;
   pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
 .agent-row:hover .agent-row-detail,
 .agent-row:focus .agent-row-detail,
 .agent-row:focus-visible .agent-row-detail {
-  display: grid;
+  visibility: visible;
+  opacity: 1;
+  transform: none;
 }
 
 .agent-row-detail span:first-child {
