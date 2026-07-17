@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cosmtrek/mindwalk/internal/adapter"
+	"github.com/cosmtrek/mindwalk/internal/citymap"
 	"github.com/cosmtrek/mindwalk/internal/model"
 )
 
@@ -689,9 +690,10 @@ func TestAgentAPIsAreRootScoped(t *testing.T) {
 		t.Fatalf("projected child shares target line storage with source: got=%d want=4", got)
 	}
 
+	parsesBeforeSecondChild := source.parses["child-a"]
 	secondChild := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/child-a/trace")
-	if secondChild.Code != http.StatusOK || source.parses["child-a"] != 1 {
-		t.Fatalf("cached child status=%d parses=%d body=%q", secondChild.Code, source.parses["child-a"], secondChild.Body.String())
+	if secondChild.Code != http.StatusOK || source.parses["child-a"] != parsesBeforeSecondChild+1 {
+		t.Fatalf("direct child parse status=%d parses=%d body=%q", secondChild.Code, source.parses["child-a"], secondChild.Body.String())
 	}
 
 	for _, tc := range []struct {
@@ -722,6 +724,34 @@ func TestAuxiliarySessionCannotBeAgentRoot(t *testing.T) {
 	resp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/child-a-key/agents")
 	if resp.Code != http.StatusNotFound || strings.TrimSpace(resp.Body.String()) != "session not found" {
 		t.Fatalf("status=%d body=%q", resp.Code, resp.Body.String())
+	}
+}
+
+func TestChildAgentTraceReusesRootCityMap(t *testing.T) {
+	s, _ := newAgentAPIServer(t)
+	requestSessions(t, s, "/api/sessions")
+	rootMeta := s.sessionCatalog["root-a"]
+
+	var builtRoots []string
+	buildCityMap := citymap.Builder{}.Build
+	s.buildCityMap = func(repoRoot string, trace *model.Trace) (*model.CityMap, error) {
+		builtRoots = append(builtRoots, repoRoot)
+		return buildCityMap(repoRoot, trace)
+	}
+
+	resp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/child-a/trace")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("child trace status = %d body=%q", resp.Code, resp.Body.String())
+	}
+	var trace model.Trace
+	if err := json.Unmarshal(resp.Body.Bytes(), &trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace.Stats.FilesInRepo != 2 || len(trace.Events) == 0 || len(trace.Events[0].Targets) == 0 || trace.Events[0].Targets[0].FileID == nil {
+		t.Fatalf("child trace was not projected against root city: %#v", trace)
+	}
+	if len(builtRoots) != 1 || builtRoots[0] != rootMeta.Cwd {
+		t.Fatalf("city builds = %q, want only root %q", builtRoots, rootMeta.Cwd)
 	}
 }
 

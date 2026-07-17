@@ -63,6 +63,7 @@ type Server struct {
 	summaries       map[string]summaryCacheEntry
 	repoMaps        map[string]repoMapEntry
 	repoMapMu       sync.Mutex
+	buildCityMap    func(string, *model.Trace) (*model.CityMap, error)
 
 	analyze     analyzeState
 	reportCache judge.Cache
@@ -136,6 +137,7 @@ func New(cfg Config) *Server {
 		summaries:       map[string]summaryCacheEntry{},
 		sessionCatalog:  map[string]model.SessionMeta{},
 		repoMaps:        map[string]repoMapEntry{},
+		buildCityMap:    citymap.Builder{}.Build,
 
 		analyze:     analyzeState{jobs: map[string]*analyzeJob{}},
 		reportCache: judge.Cache{Dir: judge.DefaultCacheDir()},
@@ -319,7 +321,7 @@ func (s *Server) handleSessionAgentTrace(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	trace, _, err := s.traceAndMapMeta(child)
+	trace, err := s.parseSessionTrace(child)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -814,16 +816,9 @@ func (s *Server) runInflight(key string, load *inflightLoad, meta model.SessionM
 }
 
 func (s *Server) loadTraceAndMap(meta model.SessionMeta) (*model.Trace, *model.CityMap, error) {
-	source := s.adapterForHarness(meta.Harness)
-	if source == nil {
-		return nil, nil, fmt.Errorf("no adapter for harness %q", meta.Harness)
-	}
-	trace, parseErr := source.Parse(meta.Path)
-	if trace == nil {
-		if parseErr != nil {
-			return nil, nil, parseErr
-		}
-		return nil, nil, errors.New("trace unavailable")
+	trace, err := s.parseSessionTrace(meta)
+	if err != nil {
+		return nil, nil, err
 	}
 	repoRoot := trace.Session.Cwd
 	if repoRoot == "" {
@@ -835,7 +830,7 @@ func (s *Server) loadTraceAndMap(meta model.SessionMeta) (*model.Trace, *model.C
 	if repoRoot == "" {
 		repoRoot = filepath.Dir(meta.Path)
 	}
-	city, err := citymap.Builder{}.Build(repoRoot, trace)
+	city, err := s.buildCityMap(repoRoot, trace)
 	if err != nil {
 		city = emptyCityMap(repoRoot)
 	} else {
@@ -845,6 +840,21 @@ func (s *Server) loadTraceAndMap(meta model.SessionMeta) (*model.Trace, *model.C
 	// grade for its error signal — the recount cannot re-derive it.
 	trace.Stats = model.ComputeStats(trace, repoFileCount(city), trace.Stats.Observability.Errors)
 	return trace, city, nil
+}
+
+func (s *Server) parseSessionTrace(meta model.SessionMeta) (*model.Trace, error) {
+	source := s.adapterForHarness(meta.Harness)
+	if source == nil {
+		return nil, fmt.Errorf("no adapter for harness %q", meta.Harness)
+	}
+	trace, parseErr := source.Parse(meta.Path)
+	if trace == nil {
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		return nil, errors.New("trace unavailable")
+	}
+	return trace, nil
 }
 
 func emptyCityMap(repoRoot string) *model.CityMap {
