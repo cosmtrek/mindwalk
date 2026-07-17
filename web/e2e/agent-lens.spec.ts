@@ -215,7 +215,15 @@ test("an available zero-event child opens an empty lens and returns to Main", as
 });
 
 test("HUD entry points open compact two-line Agent rows with accessible details", async ({ page }) => {
-  await mockApp(page);
+  const graph = structuredClone(fixtures.graph);
+  const longInstruction = "g".repeat(240);
+  graph.agents.find((agent: { id: string }) => agent.id === "child-a").instructionPreview =
+    longInstruction;
+  await mockApp(page, undefined, {
+    graph: async (route) => {
+      await route.fulfill({ json: graph });
+    }
+  });
   await openFixture(page);
 
   await page.getByRole("button", { name: "Open Agent lenses, current Main" }).click();
@@ -231,9 +239,24 @@ test("HUD entry points open compact two-line Agent rows with accessible details"
   await expect(atlas.locator(".agent-row-secondary")).toBeVisible();
   await expect(atlas.locator(".agent-row-count")).toHaveText("2 events");
   await atlas.focus();
-  await expect(atlas.locator(".agent-row-detail")).toBeVisible();
-  await expect(atlas.locator(".agent-row-detail")).toContainText(
-    "Inspect the fictional moon module"
+  const detail = atlas.locator(".agent-row-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText(longInstruction);
+
+  const dockPanel = page.locator(".dock-panel");
+  const overflow = await dockPanel.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth
+  }));
+  expect(overflow.scrollWidth).toBe(overflow.clientWidth);
+
+  const [panelBox, detailBox] = await Promise.all([
+    dockPanel.boundingBox(),
+    detail.boundingBox()
+  ]);
+  expect(detailBox!.x).toBeGreaterThanOrEqual(panelBox!.x - 1);
+  expect(detailBox!.x + detailBox!.width).toBeLessThanOrEqual(
+    panelBox!.x + panelBox!.width + 1
   );
 });
 

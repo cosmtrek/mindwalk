@@ -852,6 +852,7 @@ dd {
   max-height: 100%;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
   overflow-y: auto;
   background: oklch(0.245 0.014 256 / 0.96);
   border: 1px solid var(--hairline);
@@ -1960,14 +1961,10 @@ dd {
 }
 
 .agent-row-detail {
-  position: absolute;
-  z-index: 4;
-  top: calc(100% - 2px);
-  right: 8px;
-  left: 24px;
-  display: grid;
+  display: none;
+  min-width: 0;
+  width: 100%;
   gap: 5px;
-  visibility: hidden;
   padding: 8px 10px;
   border: 1px solid var(--hairline-strong);
   border-radius: 4px;
@@ -1975,18 +1972,14 @@ dd {
   color: var(--muted);
   font-size: var(--text-xs);
   line-height: 1.45;
-  opacity: 0;
+  overflow-wrap: anywhere;
   pointer-events: none;
-  transform: translateY(-2px);
-  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
 .agent-row:hover .agent-row-detail,
 .agent-row:focus .agent-row-detail,
 .agent-row:focus-visible .agent-row-detail {
-  visibility: visible;
-  opacity: 1;
-  transform: none;
+  display: grid;
 }
 
 .agent-row-detail span:first-child {
