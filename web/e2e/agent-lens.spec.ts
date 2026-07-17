@@ -11,6 +11,12 @@ const fixtures = JSON.parse(
 
 type TraceRoute = (agentID: string, requestCount: number, route: Route) => Promise<void>;
 
+interface MockAppRoutes {
+  sessions?: (fresh: boolean, route: Route) => Promise<void>;
+  snapshot?: (route: Route) => Promise<void>;
+  graph?: (route: Route) => Promise<void>;
+}
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((release) => {
@@ -70,7 +76,7 @@ async function beginHeldExport(page: Page) {
   });
 }
 
-async function mockApp(page: Page, traceRoute?: TraceRoute) {
+async function mockApp(page: Page, traceRoute?: TraceRoute, routes: MockAppRoutes = {}) {
   const requests = new Map<string, number>();
 
   await page.route("**/api/sessions**", async (route) => {
@@ -78,14 +84,26 @@ async function mockApp(page: Page, traceRoute?: TraceRoute) {
     const path = url.pathname;
 
     if (path === "/api/sessions") {
+      if (routes.sessions) {
+        await routes.sessions(url.searchParams.get("fresh") === "1", route);
+        return;
+      }
       await route.fulfill({ json: [fixtures.session] });
       return;
     }
     if (path === "/api/sessions/synthetic-root/snapshot") {
+      if (routes.snapshot) {
+        await routes.snapshot(route);
+        return;
+      }
       await route.fulfill({ json: { trace: fixtures.traces.root, city: fixtures.city } });
       return;
     }
     if (path === "/api/sessions/synthetic-root/agents") {
+      if (routes.graph) {
+        await routes.graph(route);
+        return;
+      }
       await route.fulfill({ json: fixtures.graph });
       return;
     }
@@ -303,6 +321,78 @@ test("export locks Rescan and guards forced refresh requests", async ({ page }) 
   expect(sessionRequests).toHaveLength(before);
   await expect(page.locator(".hud-lens")).toHaveText("LensBorealis");
   await expect(page.locator(".deck-pos-count")).toHaveText("3 / 3");
+});
+
+test("rescan invalidates child projections and preserves the actor playhead", async ({ page }) => {
+  let refreshed = false;
+  const refreshedGraph = structuredClone(fixtures.graph);
+  refreshedGraph.agents.find((agent: { id: string }) => agent.id === "child-a").traceEventCount = 3;
+
+  const refreshedCity = structuredClone(fixtures.city);
+  refreshedCity.files.push({
+    id: 3,
+    path: "src/orbit.ts",
+    dir: "src",
+    lines: 10,
+    bytes: 200,
+    lang: "TypeScript",
+    rect: { x: 4, z: 0, w: 1, d: 1 },
+    ghost: false
+  });
+
+  const refreshedChild = structuredClone(fixtures.traces["child-a"]);
+  refreshedChild.session.eventCount = 3;
+  refreshedChild.events.push({
+    seq: 2,
+    tool: "Read",
+    action: "read",
+    targets: [{ path: "src/orbit.ts", fileId: 3, touch: "read" }],
+    resultBytes: 7,
+    isError: false,
+    summary: "Read the refreshed fictional orbit module"
+  });
+  refreshedChild.stats.filesInRepo = 3;
+  refreshedChild.stats.fovea = 2;
+  refreshedChild.stats.actions.read += 1;
+
+  await mockApp(
+    page,
+    async (agentID, requestCount, route) => {
+      if (agentID === "child-a") {
+        await route.fulfill({ json: requestCount === 1 ? fixtures.traces["child-a"] : refreshedChild });
+        return;
+      }
+      await fulfillAgentTrace(agentID, route);
+    },
+    {
+      sessions: async (fresh, route) => {
+        if (fresh) refreshed = true;
+        await route.fulfill({ json: [fixtures.session] });
+      },
+      snapshot: async (route) => {
+        await route.fulfill({
+          json: { trace: fixtures.traces.root, city: refreshed ? refreshedCity : fixtures.city }
+        });
+      },
+      graph: async (route) => {
+        await route.fulfill({ json: refreshed ? refreshedGraph : fixtures.graph });
+      }
+    }
+  );
+
+  await openFixture(page);
+  const panel = await openAgents(page);
+  await row(panel, "Atlas").click();
+  await expect(page.locator(".deck-pos-count")).toHaveText("2 / 2");
+
+  await page.getByRole("button", { name: "Rescan sessions" }).click();
+  await expect(page.locator(".hud-lens")).toHaveText("LensMain");
+  await expect(row(panel, "Atlas")).toContainText("3 events");
+
+  await row(panel, "Atlas").click();
+  await expect(page.locator(".hud-lens")).toHaveText("LensAtlas");
+  await expect(page.locator(".deck-pos-count")).toHaveText("2 / 3");
+  await expect(page.locator(".hud-commit")).toContainText("3 files");
 });
 
 test("a rapid delayed Atlas to Borealis switch cannot let Atlas overwrite Borealis", async ({ page }) => {

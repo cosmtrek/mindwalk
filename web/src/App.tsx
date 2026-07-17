@@ -212,6 +212,28 @@ export default function App() {
     }
   }, [beginLoading, endLoading, setCurrentSeq, setData, setError, setSelectedPath]);
 
+  const invalidateActorTracesForRescan = useCallback(() => {
+    const activeActorID = activeAgentIDRef.current;
+    if (activeActorID !== null) {
+      actorPlayheads.current.set(activeActorID, useAppStore.getState().currentSeq);
+    }
+    agentTraceRequest.current++;
+    pendingAgentIDRef.current = undefined;
+    actorTraceCache.current.clear();
+    activeAgentIDRef.current = null;
+    setActiveAgentID(null);
+    setLoadingAgentID(undefined);
+    setAgentPanelError(undefined);
+    setAgentRetryID(undefined);
+
+    const rootTrace = rootTraceRef.current;
+    const rootCity = rootCityRef.current;
+    if (rootTrace && rootCity) {
+      setData(rootTrace, rootCity);
+      setSelectedPath(undefined);
+    }
+  }, [setData, setSelectedPath]);
+
   const scan = useCallback(async (fresh: boolean) => {
     const generation = ++scanGeneration.current;
     beginLoading();
@@ -252,6 +274,7 @@ export default function App() {
         setActiveSession(next);
         if (next) void loadAgentGraph(next, lens);
       } else if (fresh && next) {
+        invalidateActorTracesForRescan();
         void loadAgentGraph(next);
       }
       if (next) await loadSession(next);
@@ -262,7 +285,7 @@ export default function App() {
     } finally {
       endLoading();
     }
-  }, [beginLoading, endLoading, harnessFilter, hideEmpty, loadAgentGraph, loadSession, resetLens, setActiveSession, setError, setSessions]);
+  }, [beginLoading, endLoading, harnessFilter, hideEmpty, invalidateActorTracesForRescan, loadAgentGraph, loadSession, resetLens, setActiveSession, setError, setSessions]);
 
   const loadRepoMap = useCallback(async (repo?: string) => {
     beginLoading();
