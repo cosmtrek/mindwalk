@@ -1860,14 +1860,24 @@ dd {
 
 .agent-row {
   position: relative;
+  width: 100%;
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+.agent-row-select {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
   gap: 8px;
   width: 100%;
   padding: 9px 10px 9px 12px;
-  border-radius: 4px;
-  color: var(--muted);
+  border-radius: inherit;
+  color: inherit;
   text-align: left;
+}
+
+.agent-row > .agent-row-select {
+  padding-right: 34px;
 }
 
 .agent-row:hover:not(:disabled) {
@@ -1881,9 +1891,14 @@ dd {
   box-shadow: inset 0 0 0 1px var(--hairline-strong);
 }
 
-.agent-row:disabled {
-  cursor: not-allowed;
+.agent-row:disabled,
+.agent-row.disabled {
   opacity: 0.76;
+}
+
+.agent-row:disabled,
+.agent-row-select:disabled {
+  cursor: not-allowed;
 }
 
 .agent-row-icon {
@@ -1960,41 +1975,92 @@ dd {
   white-space: nowrap;
 }
 
-.agent-row-detail {
+.agent-row-detail-trigger {
   position: absolute;
-  z-index: 4;
-  top: calc(100% - 2px);
-  left: 24px;
+  right: 8px;
+  bottom: 8px;
   display: grid;
-  min-width: 0;
-  width: calc(100% - 32px);
-  max-width: calc(100% - 32px);
-  gap: 5px;
-  visibility: hidden;
-  padding: 8px 10px;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  color: var(--faint);
+}
+
+.agent-row-detail-trigger:hover,
+.agent-row-detail-trigger[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--panel);
+}
+
+.agent-detail-popover {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
   border: 1px solid var(--hairline-strong);
-  border-radius: 4px;
+  border-radius: 6px;
   background: oklch(0.225 0.014 256 / 0.99);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.4);
   color: var(--muted);
   font-size: var(--text-xs);
-  line-height: 1.45;
-  opacity: 0;
+  line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.agent-detail-popover.preview {
+  overflow: hidden;
   pointer-events: none;
-  transform: translateY(-2px);
-  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
-.agent-row:hover .agent-row-detail,
-.agent-row:focus .agent-row-detail,
-.agent-row:focus-visible .agent-row-detail {
-  visibility: visible;
-  opacity: 1;
-  transform: none;
+.agent-detail-popover.pinned {
+  overflow-y: auto;
+  pointer-events: auto;
 }
 
-.agent-row-detail span:first-child {
+.agent-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-detail-head > span {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-detail-head strong,
+.agent-detail-instruction {
   color: var(--ink);
+}
+
+.agent-detail-head strong {
+  font-size: var(--text-sm);
+  font-weight: 560;
+}
+
+.agent-detail-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  color: var(--faint);
+}
+
+.agent-detail-close:hover {
+  color: var(--ink);
+  background: var(--panel-raised);
+}
+
+.agent-detail-instruction,
+.agent-detail-meta {
+  min-width: 0;
 }
 
 .agents-empty,

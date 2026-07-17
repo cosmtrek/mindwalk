@@ -215,6 +215,7 @@ test("an available zero-event child opens an empty lens and returns to Main", as
 });
 
 test("HUD entry points open compact two-line Agent rows with accessible details", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   const graph = structuredClone(fixtures.graph);
   const longInstruction = "g".repeat(240);
   graph.agents.find((agent: { id: string }) => agent.id === "child-a").instructionPreview =
@@ -239,7 +240,7 @@ test("HUD entry points open compact two-line Agent rows with accessible details"
   await expect(atlas.locator(".agent-row-secondary")).toBeVisible();
   await expect(atlas.locator(".agent-row-count")).toHaveText("2 events");
   await atlas.focus();
-  const detail = atlas.locator(".agent-row-detail");
+  const detail = page.locator("body > .agent-detail-popover.preview");
   await expect(detail).toBeVisible();
   await expect(detail).toContainText(longInstruction);
 
@@ -250,14 +251,58 @@ test("HUD entry points open compact two-line Agent rows with accessible details"
   }));
   expect(overflow.scrollWidth).toBe(overflow.clientWidth);
 
-  const [panelBox, detailBox] = await Promise.all([
-    dockPanel.boundingBox(),
-    detail.boundingBox()
-  ]);
-  expect(detailBox!.x).toBeGreaterThanOrEqual(panelBox!.x - 1);
-  expect(detailBox!.x + detailBox!.width).toBeLessThanOrEqual(
-    panelBox!.x + panelBox!.width + 1
-  );
+  const detailBox = await detail.boundingBox();
+  expect(detailBox!.x).toBeGreaterThanOrEqual(12);
+  expect(detailBox!.x + detailBox!.width).toBeLessThanOrEqual(1440 - 12);
+  await expect
+    .poll(async () => {
+      const [currentPanelBox, currentDetailBox] = await Promise.all([
+        dockPanel.boundingBox(),
+        detail.boundingBox()
+      ]);
+      return currentPanelBox!.x - (currentDetailBox!.x + currentDetailBox!.width);
+    })
+    .toBeGreaterThanOrEqual(0);
+});
+
+test("pinned Agent details scroll without switching lenses and dismiss cleanly", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const graph = structuredClone(fixtures.graph);
+  graph.agents.find((agent: { id: string }) => agent.id === "child-a").instructionPreview =
+    "p".repeat(4000);
+  await mockApp(page, undefined, {
+    graph: async (route) => {
+      await route.fulfill({ json: graph });
+    }
+  });
+  await openFixture(page);
+  const panel = await openAgents(page);
+
+  await panel.getByRole("button", { name: "Pin details for Atlas" }).click();
+  await expect(page.locator(".hud-lens")).toHaveText("LensMain");
+
+  const pinned = page.locator("body > .agent-detail-popover.pinned");
+  await expect(pinned).toBeVisible();
+  const metrics = await pinned.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    overflowY: getComputedStyle(element).overflowY
+  }));
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+  expect(metrics.overflowY).toBe("auto");
+
+  await page.keyboard.press("Escape");
+  await expect(pinned).toBeHidden();
+
+  await panel.getByRole("button", { name: "Pin details for Atlas" }).click();
+  await page.getByRole("button", { name: "Close details" }).click();
+  await expect(pinned).toBeHidden();
+
+  await panel.getByRole("button", { name: "Pin details for Atlas" }).click();
+  await page.mouse.click(20, 20);
+  await expect(pinned).toBeHidden();
 });
 
 test("top child failure keeps its error and Retry row-local in a 12-row panel", async ({ page }) => {
@@ -302,7 +347,9 @@ test("top child failure keeps its error and Retry row-local in a 12-row panel", 
   const alert = panel.getByRole("alert");
   await expect(alert).toContainText("fictional top-row timeout");
   await expect(alert.getByRole("button", { name: "Retry" })).toBeVisible();
-  await expect(atlas.locator("xpath=following-sibling::*[1]")).toHaveAttribute("role", "alert");
+  await expect(
+    atlas.locator("xpath=ancestor::*[contains(@class, 'agent-row')]/following-sibling::*[1]")
+  ).toHaveAttribute("role", "alert");
   expect(await panel.evaluate((element) => element.scrollTop)).toBe(0);
   const box = await alert.boundingBox();
   expect(box?.y).toBeLessThan(720);
