@@ -194,6 +194,10 @@ export default function App() {
       const activeChildID = activeAgentIDRef.current;
       if (activeChildID === null) {
         setData(nextTrace, nextCity);
+        const remembered = actorPlayheads.current.get(MAIN_ACTOR_KEY);
+        if (remembered !== undefined) {
+          setCurrentSeq(Math.min(remembered, Math.max(0, nextTrace.events.length - 1)));
+        }
         setSelectedPath(undefined);
       } else {
         const childTrace = actorTraceCache.current.get(activeChildID);
@@ -214,9 +218,10 @@ export default function App() {
 
   const invalidateActorTracesForRescan = useCallback(() => {
     const activeActorID = activeAgentIDRef.current;
-    if (activeActorID !== null) {
-      actorPlayheads.current.set(activeActorID, useAppStore.getState().currentSeq);
-    }
+    actorPlayheads.current.set(
+      activeActorID ?? MAIN_ACTOR_KEY,
+      useAppStore.getState().currentSeq
+    );
     agentTraceRequest.current++;
     pendingAgentIDRef.current = undefined;
     actorTraceCache.current.clear();
@@ -230,9 +235,13 @@ export default function App() {
     const rootCity = rootCityRef.current;
     if (rootTrace && rootCity) {
       setData(rootTrace, rootCity);
+      const remembered = actorPlayheads.current.get(MAIN_ACTOR_KEY);
+      if (remembered !== undefined) {
+        setCurrentSeq(Math.min(remembered, Math.max(0, rootTrace.events.length - 1)));
+      }
       setSelectedPath(undefined);
     }
-  }, [setData, setSelectedPath]);
+  }, [setCurrentSeq, setData, setSelectedPath]);
 
   const scan = useCallback(async (fresh: boolean) => {
     const generation = ++scanGeneration.current;

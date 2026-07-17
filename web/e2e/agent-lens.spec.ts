@@ -475,6 +475,17 @@ test("rescan invalidates child projections and preserves the actor playhead", as
   await expect(page.locator(".hud-commit")).toContainText("3 files");
 });
 
+test("rescan preserves the Main actor playhead", async ({ page }) => {
+  await mockApp(page);
+  await openFixture(page);
+  await page.getByRole("slider", { name: "Playback position" }).fill("1");
+  await expect(page.locator(".deck-pos-count")).toHaveText("2 / 4");
+
+  await page.getByRole("button", { name: "Rescan sessions" }).click();
+  await expect(page.locator(".hud-lens")).toHaveText("LensMain");
+  await expect(page.locator(".deck-pos-count")).toHaveText("2 / 4");
+});
+
 test("a rapid delayed Atlas to Borealis switch cannot let Atlas overwrite Borealis", async ({ page }) => {
   const atlasRelease = deferred();
   const atlasFulfilled = deferred();
