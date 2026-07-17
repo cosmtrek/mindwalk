@@ -563,6 +563,18 @@ dd {
   font-size: var(--text-xs);
   font-weight: 560;
   letter-spacing: 0.02em;
+  pointer-events: auto;
+}
+
+.hud-lens:hover:not(:disabled),
+.hud-agent-link:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--amber);
+}
+
+.hud-lens:disabled,
+.hud-agent-link:disabled {
+  cursor: default;
 }
 
 .hud-lens span {
@@ -629,6 +641,11 @@ dd {
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
   pointer-events: auto;
+}
+
+.hud-agent-link {
+  color: inherit;
+  border-bottom: 1px dotted var(--hairline-strong);
 }
 
 /* review: the one row allowed to raise its voice — ember marks "worth a
@@ -1841,6 +1858,7 @@ dd {
 }
 
 .agent-row {
+  position: relative;
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
   gap: 8px;
@@ -1880,6 +1898,14 @@ dd {
   gap: 2px;
 }
 
+.agent-row-primary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .agent-row-title {
   min-width: 0;
   display: flex;
@@ -1904,12 +1930,17 @@ dd {
   text-transform: uppercase;
 }
 
-.agent-row-status,
-.agent-row-role,
-.agent-row-instruction {
+.agent-row-count,
+.agent-row-secondary {
   color: var(--faint);
   font-size: var(--text-xs);
   line-height: 1.4;
+}
+
+.agent-row-count {
+  flex: none;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .agent-status-missing {
@@ -1920,15 +1951,46 @@ dd {
   color: var(--alarm);
 }
 
-.agent-row-role {
+.agent-row-secondary {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-row-instruction {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+.agent-row-detail {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% - 2px);
+  right: 8px;
+  left: 24px;
+  display: grid;
+  gap: 5px;
+  visibility: hidden;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  background: oklch(0.225 0.014 256 / 0.99);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.agent-row:hover .agent-row-detail,
+.agent-row:focus .agent-row-detail,
+.agent-row:focus-visible .agent-row-detail {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+}
+
+.agent-row-detail span:first-child {
+  color: var(--ink);
 }
 
 .agents-empty,
@@ -1961,6 +2023,10 @@ dd {
   color: var(--muted);
   font-size: var(--text-xs);
   line-height: 1.45;
+}
+
+.agents-error.row-local {
+  margin: -1px 10px 4px 34px;
 }
 
 .agents-error > span,

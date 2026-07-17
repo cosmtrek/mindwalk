@@ -417,7 +417,9 @@ export function Timeline({
               </span>
             </>
           ) : (
-            <span className="readout-summary">Select a session to start the walk.</span>
+            <span className="readout-summary">
+              {trace ? "No recorded activity for this agent." : "Select a session to start the walk."}
+            </span>
           )}
         </div>
         <div className="deck-legend" aria-hidden>

@@ -547,6 +547,9 @@ export default function App() {
 
   const closeSheet = useCallback(() => setOpenSheet(null), []);
   const closePop = useCallback(() => setOpenPop(null), []);
+  const openAgents = useCallback(() => {
+    if (!exportingRef.current) setOpenSheet("agents");
+  }, []);
 
   // sheets are exclusive (one full-height paper at a time); pops toggle
   // independently so a view tweak never steals the open report
@@ -747,6 +750,8 @@ export default function App() {
             seenNow={touchCounts.seen}
             churn={churn}
             onSelectFile={selectFile}
+            onOpenAgents={!mapOnly && trace ? openAgents : undefined}
+            locked={exporting}
           />
           {city ? (
             <Dock
@@ -790,10 +795,11 @@ export default function App() {
                           <AgentsPanel
                             graph={agentGraph}
                             current={activeAgentID}
-                            loading={agentGraphLoading || loadingAgentID !== undefined}
+                            loading={agentGraphLoading}
                             loadingAgentID={loadingAgentID}
                             locked={exporting}
                             error={agentPanelError}
+                            retryAgentID={agentRetryID}
                             onSelect={(agentID) => void selectAgent(agentID)}
                             onRetry={retryAgents}
                             onClose={closeSheet}

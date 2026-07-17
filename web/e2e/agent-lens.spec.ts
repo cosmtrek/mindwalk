@@ -145,7 +145,7 @@ async function openFixture(page: Page) {
 }
 
 async function openAgents(page: Page) {
-  await page.getByRole("button", { name: /Agent lenses/ }).click();
+  await page.locator(".dock-strip").getByRole("button", { name: /Agent lenses/ }).click();
   return page.getByLabel("Agent lenses", { exact: true });
 }
 
@@ -172,6 +172,7 @@ test("Agents shows truthful rows and switches lenses without letting missing row
   const failed = row(panel, "Drift");
 
   await expect(main).toHaveAttribute("aria-pressed", "true");
+  await expect(main.locator(".agent-row-count")).toHaveText("4 events");
   await expect(atlas).toContainText("2 events");
   await expect(missing).toContainText("Trace missing");
   await expect(missing).toBeDisabled();
@@ -206,11 +207,90 @@ test("an available zero-event child opens an empty lens and returns to Main", as
   await nova.click();
   await expect(page.locator(".hud-lens")).toHaveText("LensNova");
   await expect(page.locator(".deck-pos-count")).toHaveText("0 / 0");
-  await expect(page.locator(".readout-summary")).toHaveText("Select a session to start the walk.");
+  await expect(page.locator(".readout-summary")).toHaveText("No recorded activity for this agent.");
 
   await row(panel, "Main").click();
   await expect(page.locator(".hud-lens")).toHaveText("LensMain");
   await expect(page.locator(".deck-pos-count")).toHaveText("4 / 4");
+});
+
+test("HUD entry points open compact two-line Agent rows with accessible details", async ({ page }) => {
+  await mockApp(page);
+  await openFixture(page);
+
+  await page.getByRole("button", { name: "Open Agent lenses, current Main" }).click();
+  const panel = page.getByLabel("Agent lenses", { exact: true });
+  await expect(panel).toBeVisible();
+  await panel.getByRole("button", { name: "Close agents" }).click();
+
+  await page.getByRole("button", { name: "Open 1 subagent in Agent lenses" }).click();
+  await expect(panel).toBeVisible();
+
+  const atlas = row(panel, "Atlas");
+  await expect(atlas.locator(".agent-row-primary")).toBeVisible();
+  await expect(atlas.locator(".agent-row-secondary")).toBeVisible();
+  await expect(atlas.locator(".agent-row-count")).toHaveText("2 events");
+  await atlas.focus();
+  await expect(atlas.locator(".agent-row-detail")).toBeVisible();
+  await expect(atlas.locator(".agent-row-detail")).toContainText(
+    "Inspect the fictional moon module"
+  );
+});
+
+test("top child failure keeps its error and Retry row-local in a 12-row panel", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const graph = structuredClone(fixtures.graph);
+  for (let i = 0; i < 7; i++) {
+    graph.agents.push({
+      id: `extra-${i}`,
+      parentId: "main",
+      depth: 1,
+      kind: "subagent",
+      label: `Extra ${i + 1}`,
+      role: "observer",
+      instructionPreview: `Observe fictional branch ${i + 1}`,
+      launchSeq: 10 + i,
+      launchCallId: `fictional-extra-${i}`,
+      status: "launched",
+      traceAvailability: "available",
+      traceSessionKey: `synthetic-extra-${i}`,
+      traceEventCount: 1,
+      linkQuality: "derived",
+      linkMethod: "parent-thread-id"
+    });
+  }
+
+  await mockApp(
+    page,
+    async (agentID, _count, route) => {
+      if (agentID === "child-a") {
+        await route.fulfill({ status: 503, body: "fictional top-row timeout" });
+        return;
+      }
+      await fulfillAgentTrace(agentID, route);
+    },
+    { graph: async (route) => route.fulfill({ json: graph }) }
+  );
+  await openFixture(page);
+  const panel = await openAgents(page);
+  const atlas = row(panel, "Atlas");
+  await atlas.click();
+
+  const alert = panel.getByRole("alert");
+  await expect(alert).toContainText("fictional top-row timeout");
+  await expect(alert.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(atlas.locator("xpath=following-sibling::*[1]")).toHaveAttribute("role", "alert");
+  expect(await panel.evaluate((element) => element.scrollTop)).toBe(0);
+  const box = await alert.boundingBox();
+  expect(box?.y).toBeLessThan(720);
+});
+
+test("no session keeps the start-walk empty state", async ({ page }) => {
+  await mockApp(page, undefined, {
+    sessions: async (_fresh, route) => route.fulfill({ json: [] })
+  });
+  await page.goto("/");
+  await expect(page.locator(".readout-summary")).toHaveText("Select a session to start the walk.");
 });
 
 test("subagent marks open Agents only and report evidence restores Main", async ({ page }) => {

@@ -16,6 +16,8 @@ interface HudProps {
   seenNow: number;
   churn: ChurnEntry[];
   onSelectFile: (path: string) => void;
+  onOpenAgents?: () => void;
+  locked?: boolean;
 }
 
 const CHURN_PANEL_ROWS = 8;
@@ -30,7 +32,9 @@ export const Hud = memo(function Hud({
   readNow,
   seenNow,
   churn,
-  onSelectFile
+  onSelectFile,
+  onOpenAgents,
+  locked = false
 }: HudProps) {
   const stats = trace?.stats;
   const readFinal = stats ? stats.fovea - stats.edited : 0;
@@ -71,10 +75,15 @@ export const Hud = memo(function Hud({
         <div className="hud-title-line">
           <div className="hud-repo">{city ? basename(city.repo.root) : ""}</div>
           {trace && agentLabel ? (
-            <div className="hud-lens">
+            <button
+              className="hud-lens"
+              onClick={onOpenAgents}
+              disabled={!onOpenAgents || locked}
+              aria-label={`Open Agent lenses, current ${agentLabel}`}
+            >
               <span>Lens</span>
               {agentLabel}
-            </div>
+            </button>
           ) : null}
         </div>
         {city ? (
@@ -142,9 +151,15 @@ export const Hud = memo(function Hud({
                 {stats.userTurns} turns
               </span>
               {stats.subagents > 0 ? (
-                <span data-hint="Subagent launches (Task/Agent)">
+                <button
+                  className="hud-agent-link"
+                  data-hint="Subagent launches (Task/Agent) — open Agent lenses"
+                  onClick={onOpenAgents}
+                  disabled={!onOpenAgents || locked}
+                  aria-label={`Open ${stats.subagents} subagent${stats.subagents === 1 ? "" : "s"} in Agent lenses`}
+                >
                   {stats.subagents} subagent{stats.subagents === 1 ? "" : "s"}
-                </span>
+                </button>
               ) : null}
               {stats.compactions > 0 ? (
                 <span data-hint="Context compactions — the conversation was summarized to free memory">
