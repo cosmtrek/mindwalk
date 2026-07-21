@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
+	"github.com/cosmtrek/mindwalk/internal/health"
 	"github.com/cosmtrek/mindwalk/internal/judge"
 	"github.com/cosmtrek/mindwalk/internal/model"
 	"github.com/cosmtrek/mindwalk/internal/server"
@@ -41,6 +44,8 @@ func run(args []string) error {
 		return trace(args[1:])
 	case "analyze":
 		return analyze(args[1:])
+	case "health":
+		return healthCommand(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return nil
@@ -197,19 +202,116 @@ func analyze(args []string) error {
 	return writeJSON(*out, report)
 }
 
-func parseTrace(path string) (*model.Trace, error) {
+func healthCommand(args []string) error {
+	fs := flag.NewFlagSet("health", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "write the health summary as JSON")
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+	if len(positional) != 1 {
+		return fmt.Errorf("usage: mindwalk health <session.jsonl> [--json]")
+	}
+
+	source, meta, trace, err := loadHealthInput(positional[0])
+	if err != nil {
+		return err
+	}
+	var graph *model.AgentGraph
+	var graphErr error
+	if pathWithin(meta.Path, source.SessionDir()) {
+		if graphSource, ok := source.(adapter.AgentGraphSource); ok {
+			catalog, err := summarizeSessionDirectory(source)
+			if err != nil {
+				graphErr = err
+			} else {
+				graph, graphErr = graphSource.BuildAgentGraph(meta, catalog)
+			}
+		}
+	}
+
+	return writeHealth(os.Stdout, health.Build(meta.Key, trace, graph, graphErr), *asJSON)
+}
+
+func writeHealth(w io.Writer, summary model.SessionHealth, asJSON bool) error {
+	if asJSON {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	return health.WriteText(w, summary)
+}
+
+func loadHealthInput(path string) (adapter.Source, model.SessionMeta, *model.Trace, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, model.SessionMeta{}, nil, err
+	}
+	return loadSession(absPath)
+}
+
+func loadSession(path string) (adapter.Source, model.SessionMeta, *model.Trace, error) {
 	var lastErr error
 	for _, source := range []adapter.Source{claudecode.Adapter{}, codex.Adapter{}} {
 		trace, err := source.Parse(path)
-		if err == nil {
-			return trace, nil
+		if err != nil {
+			lastErr = err
+			continue
 		}
-		lastErr = err
+		meta, err := source.Summarize(path)
+		if err != nil {
+			return nil, model.SessionMeta{}, nil, err
+		}
+		return source, meta, trace, nil
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, model.SessionMeta{}, nil, lastErr
 	}
-	return nil, fmt.Errorf("no session adapters configured")
+	return nil, model.SessionMeta{}, nil, fmt.Errorf("no session adapters configured")
+}
+
+func parseTrace(path string) (*model.Trace, error) {
+	_, _, trace, err := loadSession(path)
+	return trace, err
+}
+
+func summarizeSessionDirectory(source adapter.Source) ([]model.SessionMeta, error) {
+	var catalog []model.SessionMeta
+	err := filepath.WalkDir(source.SessionDir(), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		meta, err := source.Summarize(path)
+		if err == nil {
+			catalog = append(catalog, meta)
+		}
+		return nil
+	})
+	return catalog, err
+}
+
+func pathWithin(path, dir string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absDir, absPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func parseOutputArgs(args []string) ([]string, string, error) {
@@ -257,5 +359,6 @@ Usage:
   mindwalk map [--no-open] <repo>  open the repository citymap with no session
   mindwalk build <repo> [-o out]  write citymap.json
   mindwalk trace <session> [-o out] write trace.json
+  mindwalk health <session> [--json] inspect trace evidence quality locally
   mindwalk analyze <session> [-o out] [--judge claude|codex] [--no-cache] evaluate a session with a local agent CLI`)
 }

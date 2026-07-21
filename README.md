@@ -45,6 +45,7 @@ mindwalk open [--no-open] <session.jsonl>   open one specific session
 mindwalk map [--no-open] <repo>             open a repository map, no session needed
 mindwalk build <repo> [-o out]              write the repository citymap JSON
 mindwalk trace <session> [-o out]           write the normalized trace JSON
+mindwalk health <session> [--json]          inspect trace evidence quality locally
 mindwalk analyze <session> [--judge claude|codex] [--model name]
                                             evaluate one session (see below)
 ```
@@ -68,6 +69,9 @@ mindwalk analyze <session> [--judge claude|codex] [--model name]
 - **Agent lenses** — when a session launched subagents, the HUD carries a
   subagent count and an agents panel: pick a lens to replay any subagent's
   trace on the same map, then step back out to the main trace.
+- **Trace Health** — explains which session data was recorded directly,
+  inferred, or cannot be determined. It runs entirely locally and never calls
+  the judge.
 - **Inspector** — click a file to pin its visit history; click a visit row to
   jump the playhead to that moment.
 - **Evaluate** — ask a local agent CLI to judge the session's trajectory;
