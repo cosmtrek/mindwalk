@@ -365,6 +365,174 @@
       }
     }
   },
+  "health": {
+    "exact": {
+      "version": 1,
+      "sessionKey": "synthetic-root",
+      "signals": {
+        "reads": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-read-targets",
+          "affects": ["map", "reread-rate", "judge-exploration", "judge-wandering"],
+          "directCount": 3,
+          "inferredCount": 0
+        },
+        "errors": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-error-status",
+          "affects": ["error-rate", "timeline-errors", "judge-verification"],
+          "recognizedCount": 0
+        },
+        "verification": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-verification-results",
+          "affects": ["judge-verification"],
+          "recognizedCount": 1,
+          "knownResultCount": 1,
+          "unknownResultCount": 0,
+          "editsAfterLastVerify": 0
+        },
+        "subagents": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "exact-agent-links",
+          "affects": ["agent-lens"],
+          "exactCount": 2,
+          "derivedCount": 0,
+          "missingTraceCount": 0,
+          "unavailableTraceCount": 0
+        }
+      }
+    },
+    "estimated": {
+      "version": 1,
+      "sessionKey": "synthetic-root",
+      "badge": "estimated",
+      "signals": {
+        "reads": {
+          "availability": "ready",
+          "quality": "estimated",
+          "reason": "some-reads-inferred-from-shell",
+          "affects": ["map", "reread-rate", "judge-exploration", "judge-wandering"],
+          "directCount": 2,
+          "inferredCount": 1
+        },
+        "errors": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-error-status",
+          "affects": ["error-rate", "timeline-errors", "judge-verification"],
+          "recognizedCount": 0
+        },
+        "verification": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-verification-results",
+          "affects": ["judge-verification"],
+          "recognizedCount": 1,
+          "knownResultCount": 1,
+          "unknownResultCount": 0,
+          "editsAfterLastVerify": 0
+        },
+        "subagents": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "exact-agent-links",
+          "affects": ["agent-lens"],
+          "exactCount": 2,
+          "derivedCount": 0,
+          "missingTraceCount": 0,
+          "unavailableTraceCount": 0
+        }
+      }
+    },
+    "unavailable": {
+      "version": 1,
+      "sessionKey": "synthetic-root",
+      "badge": "limited",
+      "signals": {
+        "reads": {
+          "availability": "ready",
+          "quality": "unavailable",
+          "reason": "read-signal-unavailable",
+          "affects": ["map", "reread-rate", "judge-exploration", "judge-wandering"],
+          "directCount": 0,
+          "inferredCount": 0
+        },
+        "errors": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-error-status",
+          "affects": ["error-rate", "timeline-errors", "judge-verification"],
+          "recognizedCount": 0
+        },
+        "verification": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-verification-results",
+          "affects": ["judge-verification"],
+          "recognizedCount": 1,
+          "knownResultCount": 1,
+          "unknownResultCount": 0,
+          "editsAfterLastVerify": 0
+        },
+        "subagents": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "exact-agent-links",
+          "affects": ["agent-lens"],
+          "exactCount": 2,
+          "derivedCount": 0,
+          "missingTraceCount": 0,
+          "unavailableTraceCount": 0
+        }
+      }
+    },
+    "agentFailed": {
+      "version": 1,
+      "sessionKey": "synthetic-root",
+      "badge": "limited",
+      "signals": {
+        "reads": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-read-targets",
+          "affects": ["map", "reread-rate", "judge-exploration", "judge-wandering"],
+          "directCount": 3,
+          "inferredCount": 0
+        },
+        "errors": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-error-status",
+          "affects": ["error-rate", "timeline-errors", "judge-verification"],
+          "recognizedCount": 0
+        },
+        "verification": {
+          "availability": "ready",
+          "quality": "exact",
+          "reason": "structured-verification-results",
+          "affects": ["judge-verification"],
+          "recognizedCount": 1,
+          "knownResultCount": 1,
+          "unknownResultCount": 0,
+          "editsAfterLastVerify": 0
+        },
+        "subagents": {
+          "availability": "failed",
+          "reason": "agent-graph-load-failed",
+          "affects": ["agent-lens"],
+          "exactCount": 0,
+          "derivedCount": 0,
+          "missingTraceCount": 0,
+          "unavailableTraceCount": 0
+        }
+      }
+    }
+  },
   "reportStatus": {
     "state": "done",
     "stale": false,

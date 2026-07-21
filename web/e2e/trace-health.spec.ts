@@ -77,7 +77,7 @@ async function mockApp(
         if (handlers.health) {
           await handlers.health(key, requestCount, route);
         } else {
-          await route.fulfill({ json: exactHealth(key) });
+          await route.fulfill({ json: healthFixture("exact", key) });
         }
         return;
     }
@@ -93,91 +93,14 @@ function snapshotFor(key: string) {
   return { trace, city: fixtures.city };
 }
 
-function exactHealth(key: string) {
-  return {
-    version: 1,
-    sessionKey: key,
-    signals: {
-      reads: {
-        availability: "ready",
-        quality: "exact",
-        reason: "structured-read-targets",
-        affects: ["map"],
-        directCount: 3,
-        inferredCount: 0
-      },
-      errors: {
-        availability: "ready",
-        quality: "exact",
-        reason: "structured-error-status",
-        affects: ["error-rate"],
-        recognizedCount: 0
-      },
-      verification: {
-        availability: "ready",
-        quality: "exact",
-        reason: "structured-verification-results",
-        affects: ["judge-verification"],
-        recognizedCount: 1,
-        knownResultCount: 1,
-        unknownResultCount: 0,
-        editsAfterLastVerify: 0
-      },
-      subagents: {
-        availability: "not-applicable",
-        reason: "no-subagents",
-        affects: ["agent-lens"],
-        exactCount: 0,
-        derivedCount: 0,
-        missingTraceCount: 0,
-        unavailableTraceCount: 0
-      }
-    }
-  };
+function healthFixture(name: "exact" | "estimated" | "unavailable" | "agentFailed", key: string) {
+  return { ...structuredClone(fixtures.health[name]), sessionKey: key };
 }
 
-function mixedHealth(key: string, badge: "estimated" | "limited" = "limited") {
-  return {
-    version: 1,
-    sessionKey: key,
-    badge,
-    signals: {
-      reads: {
-        availability: "ready",
-        quality: "unavailable",
-        reason: "read-signal-unavailable",
-        affects: ["map", "judge-exploration"],
-        directCount: 0,
-        inferredCount: 0
-      },
-      errors: {
-        availability: "ready",
-        quality: "exact",
-        reason: "structured-error-status",
-        affects: ["error-rate"],
-        recognizedCount: 0
-      },
-      verification: {
-        availability: "ready",
-        quality: "estimated",
-        reason: "some-verification-results-unknown",
-        affects: ["judge-verification"],
-        recognizedCount: 2,
-        knownResultCount: 1,
-        unknownResultCount: 1,
-        editsAfterLastVerify: 1
-      },
-      subagents: {
-        availability: "failed",
-        reason: "agent-graph-load-failed",
-        affects: ["agent-lens"],
-        exactCount: 0,
-        derivedCount: 0,
-        missingTraceCount: 0,
-        unavailableTraceCount: 0
-      }
-    }
-  };
+function unavailableWithAgentFailure(key: string) {
+  const health = healthFixture("unavailable", key);
+  health.signals.subagents = structuredClone(fixtures.health.agentFailed.signals.subagents);
+  return health;
 }
 
 function healthTrigger(page: Page): Locator {
@@ -195,14 +118,24 @@ function healthRow(panel: Locator, title: string): Locator {
   return panel.locator(".health-row").filter({ hasText: title });
 }
 
+function collectRuntimeErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+  return errors;
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.clear());
 });
 
 test("shows failed and unavailable as distinct evidence states at compact width", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
   await page.setViewportSize({ width: 320, height: 760 });
   await mockApp(page, {
-    health: async (key, _requestCount, route) => route.fulfill({ json: mixedHealth(key) })
+    health: async (key, _requestCount, route) => route.fulfill({ json: unavailableWithAgentFailure(key) })
   });
   await page.goto("/?session=synthetic-root");
 
@@ -214,16 +147,20 @@ test("shows failed and unavailable as distinct evidence states at compact width"
   await expect(panel.locator(".health-row-title")).toHaveText([
     "File reads",
     "Subagents",
-    "Verification",
-    "Errors"
+    "Errors",
+    "Verification"
   ]);
 
   const unavailable = healthRow(panel, "File reads");
   const failed = healthRow(panel, "Subagents");
   await expect(unavailable.locator(".health-row-state")).toHaveText("Unavailable");
   await expect(unavailable.locator(".health-signal-unavailable")).toHaveCount(1);
+  await expect(unavailable.locator(".error")).toHaveCount(0);
+  await expect(unavailable).not.toContainText("No reads occurred");
   await expect(failed.locator(".health-row-state")).toHaveText("Failed");
   await expect(failed.locator(".health-signal-failed")).toHaveCount(1);
+  await expect(page.locator(".city-scene canvas")).toBeVisible();
+  await expect(page.locator(".deck-pos-count")).toHaveText("4 / 4");
 
   expect(
     await panel
@@ -247,6 +184,7 @@ test("shows failed and unavailable as distinct evidence states at compact width"
 
   await failed.locator(".health-row-toggle").click();
   await expect(failed.locator(".health-explanation")).toContainText("could not load subagent evidence");
+  await expect(failed.locator(".health-explanation")).toContainText("Retry trace health");
   await failed.locator("summary").click();
   await expect(failed.locator(".health-technical")).toHaveAttribute("open", "");
 
@@ -254,11 +192,13 @@ test("shows failed and unavailable as distinct evidence states at compact width"
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(320);
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("uses the server badge without deriving a replacement from signals", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
   await mockApp(page, {
-    health: async (key, _requestCount, route) => route.fulfill({ json: mixedHealth(key, "estimated") })
+    health: async (key, _requestCount, route) => route.fulfill({ json: healthFixture("estimated", key) })
   });
   await page.goto("/?session=synthetic-root");
 
@@ -266,13 +206,31 @@ test("uses the server badge without deriving a replacement from signals", async 
   await expect(trigger).toHaveAttribute("aria-label", "Trace health: some evidence is estimated");
   await expect(trigger.locator(".dock-dot-estimated")).toHaveCount(1);
   await expect(trigger.locator(".dock-dot-limited")).toHaveCount(0);
+
+  const panel = await openHealth(page);
+  const reads = healthRow(panel, "File reads");
+  await expect(reads.locator(".health-row-state")).toHaveText("Estimated");
+  await expect(reads.locator(".health-technical")).not.toHaveAttribute("open", "");
+  await reads.locator(".health-row-toggle").click();
+  await expect(reads.locator(".health-explanation")).toContainText("2 reads");
+  await expect(reads.locator(".health-explanation")).toContainText("1 read");
+  await reads.locator("summary").click();
+  await expect(reads.locator("dl")).toContainText("Direct2");
+  await expect(reads.locator("dl")).toContainText("Inferred1");
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("relates the pop trigger to its panel and restores focus on both close paths", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
   await mockApp(page);
   await page.goto("/?session=synthetic-root");
 
   const trigger = healthTrigger(page);
+  await expect(trigger).toHaveAttribute(
+    "aria-label",
+    "Trace health: evidence recorded directly where applicable"
+  );
+  await expect(trigger.locator(".dock-dot")).toHaveCount(0);
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   const controls = await trigger.getAttribute("aria-controls");
   expect(controls).toBeTruthy();
@@ -289,6 +247,7 @@ test("relates the pop trigger to its panel and restores focus on both close path
   await page.getByRole("button", { name: "Close trace health" }).click();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toBeFocused();
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("rejects a delayed health response after switching sessions", async ({ page }) => {
@@ -302,11 +261,11 @@ test("rejects a delayed health response after switching sessions", async ({ page
         if (key === fixtures.session.key) {
           oldHealthStarted.resolve();
           await oldHealth.promise;
-          await route.fulfill({ json: { ...exactHealth(key), badge: "limited" } });
+          await route.fulfill({ json: healthFixture("agentFailed", key) });
           oldHealthDelivered.resolve();
           return;
         }
-        await route.fulfill({ json: mixedHealth(key, "estimated") });
+        await route.fulfill({ json: healthFixture("estimated", key) });
       }
     },
     [fixtures.session, nextSession]
@@ -320,8 +279,8 @@ test("rejects a delayed health response after switching sessions", async ({ page
     "Trace health: some evidence is estimated"
   );
   const panel = await openHealth(page);
-  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Unavailable");
-  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Failed");
+  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Estimated");
+  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Exact");
   oldHealth.resolve();
   await oldHealthDelivered.promise;
   await page.evaluate(
@@ -332,8 +291,8 @@ test("rejects a delayed health response after switching sessions", async ({ page
     "Trace health: some evidence is estimated"
   );
   await expect(healthTrigger(page).locator(".dock-dot-estimated")).toHaveCount(1);
-  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Unavailable");
-  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Failed");
+  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Estimated");
+  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Exact");
 });
 
 test("keeps health failure local and retries only the health request", async ({ page }) => {
@@ -342,7 +301,7 @@ test("keeps health failure local and retries only the health request", async ({ 
       if (requestCount === 1) {
         await route.fulfill({ status: 503, body: "health temporarily unavailable" });
       } else {
-        await route.fulfill({ json: exactHealth(key) });
+        await route.fulfill({ json: healthFixture("exact", key) });
       }
     }
   });
@@ -390,14 +349,16 @@ test("loads refreshed health only after a successful fresh scan and snapshot", a
     health: async (key, _requestCount, route) => {
       healthRequests++;
       order.push(`health-${healthRequests}`);
-      const response = healthRequests === 1 ? exactHealth(key) : mixedHealth(key, "estimated");
+      const response = healthRequests === 1
+        ? healthFixture("estimated", key)
+        : healthFixture("exact", key);
       await route.fulfill({ json: response });
     }
   });
   await page.goto("/?session=synthetic-root");
   await expect(healthTrigger(page)).toHaveAttribute(
     "aria-label",
-    "Trace health: evidence recorded directly where applicable"
+    "Trace health: some evidence is estimated"
   );
 
   await page.getByRole("button", { name: "Rescan sessions" }).click();
@@ -409,7 +370,7 @@ test("loads refreshed health only after a successful fresh scan and snapshot", a
   await expect.poll(() => healthRequests).toBe(2);
   await expect(healthTrigger(page)).toHaveAttribute(
     "aria-label",
-    "Trace health: some evidence is estimated"
+    "Trace health: evidence recorded directly where applicable"
   );
   expect(order.indexOf("fresh-snapshot-delivered")).toBeGreaterThan(
     order.indexOf("fresh-snapshot-started")
@@ -429,7 +390,7 @@ test("does not refresh health after a failed fresh scan", async ({ page }) => {
     },
     health: async (key, _requestCount, route) => {
       healthRequests++;
-      await route.fulfill({ json: exactHealth(key) });
+      await route.fulfill({ json: healthFixture("exact", key) });
     }
   });
   await page.goto("/?session=synthetic-root");

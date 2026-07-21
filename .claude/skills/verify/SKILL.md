@@ -70,3 +70,25 @@ New-tab endpoint needs PUT: `fetch('http://127.0.0.1:9333/json/new?<url>', {meth
 - Rapid session switch (click uncached row, 150ms later a cached row) must end
   showing the last-clicked session's data.
 - Bogus `?session=` must fall back to the newest session with a console.warn.
+
+### Trace Health
+
+- Open a session whose `GET /api/sessions/<key>/health` response has no badge
+  and only exact evidence where applicable. The Trace Health shield must exist
+  without a dot; opening it must show the four evidence rows and leave every
+  `Technical details` disclosure closed.
+- Open a session whose response has `badge: "limited"`. The shield gets the
+  quiet limited dot. Unavailable and failed rows sort before estimated, exact,
+  and not-needed rows; unavailable is neutral rather than red/error styling.
+  Expand a row, then open `Technical details` and verify the reason code,
+  affected features, and direct/inferred or recognized counts match the JSON.
+- To exercise local failure handling, use CDP `Fetch` interception to fail only
+  `GET /api/sessions/<key>/health`. The pop shows `Retry trace health` while the
+  map canvas and `.deck-pos-count` remain usable. Remove the interception and
+  click retry; only the health request repeats and the rows recover.
+- Capture the health payload, click `Rescan sessions`, and verify a fresh
+  sessions request and refreshed snapshot complete before health is requested
+  again. The shield badge and open panel must update to the second payload.
+- Keep a Network-domain request log throughout the exact, limited, retry, and
+  Rescan checks. There must be zero `POST /api/sessions/<key>/analyze` requests
+  and no Evaluate status transition: Trace Health never starts the judge.
