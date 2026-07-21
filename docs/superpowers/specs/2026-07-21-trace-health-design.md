@@ -224,12 +224,15 @@ Keeping rules in Go gives the CLI, API, tests, and web client one answer. React 
 
 Add a versioned `model.SessionHealth` contract and a mirrored `schema/session-health.schema.json`.
 
+The builder also emits an optional top-level `badge` (`estimated` or `limited`). The web client renders this value directly; it does not repeat the aggregation rule. The field is absent when every applicable signal is exact.
+
 The JSON shape is fixed by signal rather than using an untyped map:
 
 ```json
 {
   "version": 1,
   "sessionKey": "codex-abc",
+  "badge": "estimated",
   "signals": {
     "reads": {
       "availability": "ready",
