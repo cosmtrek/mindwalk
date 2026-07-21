@@ -104,9 +104,15 @@ func buildSubagents(trace *model.Trace, graph *model.AgentGraph, graphErr error)
 	}
 
 	summary := model.SubagentHealth{HealthSignal: signal(model.HealthReady, model.ObservabilityExact, model.HealthReasonExactAgentLinks, subagentAffects)}
+	children := 0
+	allExactAvailable := true
 	for _, node := range graph.Agents {
 		if node.Kind == model.AgentKindMain {
 			continue
+		}
+		children++
+		if node.LinkQuality != model.AgentLinkQualityExact || node.TraceAvailability != model.TraceAvailabilityAvailable {
+			allExactAvailable = false
 		}
 		switch node.LinkQuality {
 		case model.AgentLinkQualityExact:
@@ -121,7 +127,7 @@ func buildSubagents(trace *model.Trace, graph *model.AgentGraph, graphErr error)
 			summary.UnavailableTraceCount++
 		}
 	}
-	if summary.DerivedCount > 0 || summary.MissingTraceCount > 0 || summary.UnavailableTraceCount > 0 {
+	if children != trace.Stats.Subagents || !allExactAvailable {
 		summary.Quality = model.ObservabilityEstimated
 		summary.Reason = model.HealthReasonMixedAgentLinks
 	}

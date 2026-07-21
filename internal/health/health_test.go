@@ -136,6 +136,18 @@ func TestBuildSubagentSignals(t *testing.T) {
 			want:  subagentHealth(model.HealthReady, model.ObservabilityUnavailable, model.HealthReasonAgentContextMissing, 0, 0, 0, 0),
 		},
 		{
+			name:  "estimated when recorded launch has no graph child",
+			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withSubagents(1)),
+			graph: graphWith(),
+			want:  subagentHealth(model.HealthReady, model.ObservabilityEstimated, model.HealthReasonMixedAgentLinks, 0, 0, 0, 0),
+		},
+		{
+			name:  "estimated unavailable link with available trace",
+			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withSubagents(1)),
+			graph: graphWith(agent(model.AgentLinkQualityUnavailable, model.TraceAvailabilityAvailable)),
+			want:  subagentHealth(model.HealthReady, model.ObservabilityEstimated, model.HealthReasonMixedAgentLinks, 0, 0, 0, 0),
+		},
+		{
 			name:  "exact children",
 			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withSubagents(2)),
 			graph: graphWith(agent(model.AgentLinkQualityExact, model.TraceAvailabilityAvailable), agent(model.AgentLinkQualityExact, model.TraceAvailabilityAvailable)),
