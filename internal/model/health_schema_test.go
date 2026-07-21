@@ -47,10 +47,10 @@ func TestSessionHealthSchemaAcceptsRepresentativeHealth(t *testing.T) {
 		Version:    SessionHealthVersion,
 		SessionKey: "codex-root",
 		Signals: HealthSignals{
-			Reads:        ReadHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonReadsInferred}, DirectCount: 18, InferredCount: 12},
-			Errors:       ErrorHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityExact, Reason: HealthReasonStructuredErrors}},
-			Verification: VerificationHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonVerificationUnknown}, RecognizedCount: 4, KnownResultCount: 3, UnknownResultCount: 1},
-			Subagents:    SubagentHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonMixedAgentLinks}, ExactCount: 3, DerivedCount: 1, MissingTraceCount: 1},
+			Reads:        ReadHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonReadsInferred, Affects: []string{"read-coverage"}}, DirectCount: 18, InferredCount: 12},
+			Errors:       ErrorHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityExact, Reason: HealthReasonStructuredErrors, Affects: []string{}}},
+			Verification: VerificationHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonVerificationUnknown, Affects: []string{"verification-result"}}, RecognizedCount: 4, KnownResultCount: 3, UnknownResultCount: 1},
+			Subagents:    SubagentHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonMixedAgentLinks, Affects: []string{"subagent-trace"}}, ExactCount: 3, DerivedCount: 1, MissingTraceCount: 1},
 		},
 	}
 	assertSchemaAccepts(t, compileHealthSchema(t), health)
@@ -61,10 +61,10 @@ func TestSessionHealthSchemaRejectsReadySignalWithoutQuality(t *testing.T) {
 		Version:    SessionHealthVersion,
 		SessionKey: "codex-root",
 		Signals: HealthSignals{
-			Reads:        ReadHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonReadsInferred}},
-			Errors:       ErrorHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityExact, Reason: HealthReasonStructuredErrors}},
-			Verification: VerificationHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonVerificationUnknown}},
-			Subagents:    SubagentHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonMixedAgentLinks}},
+			Reads:        ReadHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonReadsInferred, Affects: []string{}}},
+			Errors:       ErrorHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityExact, Reason: HealthReasonStructuredErrors, Affects: []string{}}},
+			Verification: VerificationHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonVerificationUnknown, Affects: []string{}}},
+			Subagents:    SubagentHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonMixedAgentLinks, Affects: []string{}}},
 		},
 	}
 	document, err := json.Marshal(health)
@@ -80,6 +80,32 @@ func TestSessionHealthSchemaRejectsReadySignalWithoutQuality(t *testing.T) {
 	delete(reads, "quality")
 	if err := compileHealthSchema(t).Validate(payload); err == nil {
 		t.Fatal("schema accepted ready reads signal without quality")
+	}
+}
+
+func TestSessionHealthSchemaRejectsNullAffects(t *testing.T) {
+	health := SessionHealth{
+		Version:    SessionHealthVersion,
+		SessionKey: "codex-root",
+		Signals: HealthSignals{
+			Reads:        ReadHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonReadsInferred, Affects: []string{}}},
+			Errors:       ErrorHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityExact, Reason: HealthReasonStructuredErrors, Affects: []string{}}},
+			Verification: VerificationHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonVerificationUnknown, Affects: []string{}}},
+			Subagents:    SubagentHealth{HealthSignal: HealthSignal{Availability: HealthReady, Quality: ObservabilityEstimated, Reason: HealthReasonMixedAgentLinks, Affects: []string{}}},
+		},
+	}
+	document, err := json.Marshal(health)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(document, &payload); err != nil {
+		t.Fatal(err)
+	}
+	signals := payload["signals"].(map[string]any)
+	signals["reads"].(map[string]any)["affects"] = nil
+	if err := compileHealthSchema(t).Validate(payload); err == nil {
+		t.Fatal("schema accepted null affects")
 	}
 }
 

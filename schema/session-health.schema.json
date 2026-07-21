@@ -13,7 +13,7 @@
   "additionalProperties": false,
   "$defs": {
     "affects": {
-      "type": ["array", "null"],
+      "type": "array",
       "items": { "type": "string" },
       "uniqueItems": true
     },
