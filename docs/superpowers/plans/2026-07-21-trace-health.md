@@ -349,8 +349,9 @@ Expected: FAIL，函数不存在。
 
 ```go
 func commandOutputStatus(output string) (failed bool, known bool) {
-	// JSON exit_code / metadata.exit_code / timed_out, explicit patch failure,
-	// Script completed/failed, exit-code lines, and user abort return known=true.
+	// JSON exit_code / metadata.exit_code are terminal. Without an exit code,
+	// timed_out:true is a known failure; bare timed_out:false remains unknown.
+	// Explicit patch failure, Script completed/failed, exit-code lines, and user abort return known=true.
 	// Script running and unstructured text return known=false.
 }
 
