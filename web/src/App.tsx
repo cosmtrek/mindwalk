@@ -227,7 +227,7 @@ export default function App() {
         currentLensGeneration !== lensGeneration.current ||
         activeSessionKeyRef.current !== key
       ) {
-        return;
+        return false;
       }
       rootTraceRef.current = nextTrace;
       rootCityRef.current = nextCity;
@@ -248,10 +248,12 @@ export default function App() {
           setCurrentSeq(Math.min(seq, Math.max(0, childTrace.events.length - 1)));
         }
       }
+      return true;
     } catch (err) {
       if (generation === loadGeneration.current && activeSessionKeyRef.current === key) {
         setError(describeError(err, "loading the session"));
       }
+      return false;
     } finally {
       endLoading();
     }
@@ -317,7 +319,8 @@ export default function App() {
         data.find((session) => sessionVisible(session, { hideEmpty, harness: harnessFilter })) ?? data[0]
       )?.key;
       const next = preferred ?? (stillListed ? currentActiveKey : fallback);
-      if (next !== currentActiveKey) {
+      const selectedDifferentSession = next !== currentActiveKey;
+      if (selectedDifferentSession) {
         const lens = resetLens();
         resetHealth();
         activeSessionKeyRef.current = next;
@@ -325,13 +328,17 @@ export default function App() {
         setActiveSession(next);
         if (next) {
           void loadAgentGraph(next, lens);
-          void loadHealth(next);
+          if (!fresh) void loadHealth(next);
         }
       } else if (fresh && next) {
         invalidateActorTracesForRescan();
         void loadAgentGraph(next);
       }
-      if (next) await loadSession(next);
+      if (next) {
+        const applied = await loadSession(next);
+        if (!applied) return false;
+        if (fresh && selectedDifferentSession) void loadHealth(next);
+      }
       return true;
     } catch (err) {
       if (generation === scanGeneration.current) {

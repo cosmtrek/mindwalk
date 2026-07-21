@@ -127,6 +127,7 @@ const (
 	HealthReasonErrorsInferred        = "errors-inferred-from-output"
 	HealthReasonErrorsUnavailable     = "error-signal-unavailable"
 	HealthReasonStructuredVerify      = "structured-verification-results"
+	HealthReasonVerificationInferred  = "verification-command-recognition-inferred"
 	HealthReasonVerificationUnknown   = "some-verification-results-unknown"
 	HealthReasonVerificationUnavailable = "verification-signal-unavailable"
 	HealthReasonNoSubagents           = "no-subagents"
@@ -194,6 +195,7 @@ type TraceHealthEvidence struct {
 }
 
 type VerificationEvidence struct {
+	Quality            string
 	RecognizedCount    int
 	KnownResultCount   int
 	UnknownResultCount int
@@ -245,7 +247,7 @@ git commit -m "feat(model): define session health contract"
 
 **Interfaces:**
 - Consumes: `model.Trace.HealthEvidence.Verification`、现有 `actionFor`、Claude `tool_result.is_error`、Codex output envelope。
-- Produces: `adapter.ToolResult.OutcomeKnown bool`；`BuildEvent` 对 `verify` 事件递增 recognized/known/unknown；Claude 用字段是否存在判定 known；Codex `commandOutputStatus(string) (failed bool, known bool)`。
+- Produces: `adapter.ToolResult.OutcomeKnown bool`；`BuildEvent` 对 `verify` 事件递增 recognized/known/unknown，并把当前基于 shell command / static exec 文本的识别质量记为 `estimated`；Claude 用字段是否存在判定 known；Codex `commandOutputStatus(string) (failed bool, known bool)`。
 
 - [ ] **Step 1: 写共享 BuildEvent RED 测试**
 
@@ -253,7 +255,7 @@ git commit -m "feat(model): define session health contract"
 
 ```go
 got := trace.HealthEvidence.Verification
-want := model.VerificationEvidence{RecognizedCount: 3, KnownResultCount: 2, UnknownResultCount: 1}
+want := model.VerificationEvidence{Quality: model.ObservabilityEstimated, RecognizedCount: 3, KnownResultCount: 2, UnknownResultCount: 1}
 if got != want {
 	t.Fatalf("verification evidence = %#v, want %#v", got, want)
 }
@@ -282,6 +284,7 @@ type ToolResult struct {
 ```go
 if event.Action == "verify" {
 	evidence := &trace.HealthEvidence.Verification
+	evidence.Quality = model.ObservabilityEstimated
 	evidence.RecognizedCount++
 	if result.OutcomeKnown {
 		evidence.KnownResultCount++
@@ -395,7 +398,7 @@ git commit -m "feat(adapter): preserve verification evidence"
 
 - [ ] **Step 1: 写四信号表格 RED 测试**
 
-在 `health_test.go` 为 reads/errors/verification/subagents 分组写表格测试，至少包含设计文档列出的 exact、estimated、unavailable、not-applicable、failed。使用固定 helper 构造 Trace/Graph，并断言完整 signal 结构，而不是只断言 quality。
+在 `health_test.go` 为 reads/errors/verification/subagents 分组写表格测试，至少包含设计文档列出的 exact、estimated、unavailable、not-applicable、failed。Verification 必须分别覆盖 exact recognition + all-known outcomes、estimated recognition + all-known outcomes、任一 unknown outcome、无可用 signal。使用固定 helper 构造 Trace/Graph，并断言完整 signal 结构，而不是只断言 quality。
 
 必须单独覆盖：
 
@@ -420,7 +423,7 @@ Expected: FAIL，package 或函数不存在。
 
 - [ ] **Step 3: 实现 reads/errors/verification 分类**
 
-`Build` 初始化固定 affects 列表；reads 通过 `target.Touch == "read"` 与 `target.Weak` 计数；errors 使用 `trace.Stats.Errors` 汇总；verification 使用 `trace.HealthEvidence.Verification` 和 `trace.Stats.EditsAfterLastVerify`。
+`Build` 初始化固定 affects 列表；reads 通过 `target.Touch == "read"` 与 `target.Weak` 计数；errors 使用 `trace.Stats.Errors` 汇总；verification 使用 `trace.HealthEvidence.Verification` 和 `trace.Stats.EditsAfterLastVerify`。Verification 只有在 recognition quality 为 exact 且全部 recognized outcomes 都 known 时才是 exact；recognition 为 estimated 或任一 outcome unknown 时为 estimated；没有可用 recognition signal 时为 unavailable。
 
 当 `trace.Stats.Actions.Verify > 0` 但内存 evidence 的 recognized 为 0（例如手工构造或旧路径）时，不得伪造 known；返回 `quality=unavailable`、reason `verification-signal-unavailable`，recognized 仍取 `Actions.Verify`。
 

@@ -204,6 +204,9 @@ func BuildEvent(trace *model.Trace, call ToolCall, result ToolResult) model.Even
 	}
 	if event.Action == "verify" {
 		evidence := &trace.HealthEvidence.Verification
+		// Every verification action currently recognized here comes from shell
+		// command text or static exec inspection, so recognition is heuristic.
+		evidence.Quality = model.ObservabilityEstimated
 		evidence.RecognizedCount++
 		if result.OutcomeKnown {
 			evidence.KnownResultCount++

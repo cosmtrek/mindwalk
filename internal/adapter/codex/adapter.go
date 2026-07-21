@@ -707,8 +707,8 @@ func commandOutputStatus(output string) (failed bool, known bool) {
 		if envelope.Metadata.ExitCode != nil {
 			return *envelope.Metadata.ExitCode != 0, true
 		}
-		if envelope.TimedOut != nil {
-			return *envelope.TimedOut, true
+		if envelope.TimedOut != nil && *envelope.TimedOut {
+			return true, true
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(trimmed), "apply_patch verification failed") {

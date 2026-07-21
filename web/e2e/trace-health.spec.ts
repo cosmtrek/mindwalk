@@ -129,6 +129,21 @@ function estimatedBadgeWithUnavailableSignals(key: string) {
   return { ...healthFixture("unavailable", key), badge: "estimated" };
 }
 
+function estimatedWithMissingSubagents(key: string) {
+  const health = healthFixture("estimated", key);
+  health.signals.subagents = {
+    availability: "ready",
+    quality: "estimated",
+    reason: "mixed-agent-link-quality",
+    affects: ["agent-lens"],
+    exactCount: 1,
+    derivedCount: 1,
+    missingTraceCount: 2,
+    unavailableTraceCount: 1
+  };
+  return health;
+}
+
 function healthTrigger(page: Page): Locator {
   return page.locator(".dock-strip").getByRole("button", { name: /Trace health/ });
 }
@@ -173,7 +188,7 @@ test("shows failed and unavailable as distinct evidence states at compact width"
 
   const unavailable = healthRow(panel, "File reads");
   const failed = healthRow(panel, "Subagents");
-  await expect(unavailable.locator(".health-row-state")).toHaveText("Unavailable");
+  await expect(unavailable.locator(".health-row-state")).toHaveText("Cannot determine from this log");
   await expect(unavailable.locator(".health-signal-unavailable")).toHaveCount(1);
   await expect(unavailable).not.toHaveClass(/\berror\b/);
   await expect(unavailable.locator(".error")).toHaveCount(0);
@@ -232,6 +247,52 @@ test("shows failed and unavailable as distinct evidence states at compact width"
   expect(box!.x + box!.width).toBeLessThanOrEqual(320);
 });
 
+test("retries a failed signal through a health-only control", async ({ page }) => {
+  const requests = await mockApp(page, {
+    health: async (key, requestCount, route) => {
+      await route.fulfill({ json: healthFixture(requestCount === 1 ? "agentFailed" : "exact", key) });
+    }
+  });
+  await page.goto("/?session=synthetic-root");
+
+  const panel = await openHealth(page);
+  const failed = healthRow(panel, "Subagents");
+  await expect(failed.locator(".health-row-state")).toHaveText("Failed");
+  const retry = failed.getByRole("button", { name: "Retry trace health" });
+  await expect(retry).toBeVisible();
+  const before = new Map(requests);
+
+  await retry.click();
+  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Recorded directly");
+  await expect(page.locator(".city-scene canvas")).toBeVisible();
+  await expect(page.locator(".deck-pos-count")).toHaveText("4 / 4");
+  expect(requests.get("/api/sessions/synthetic-root/health")).toBe(2);
+  expect(requests.get("/api/sessions")).toBe(before.get("/api/sessions"));
+  expect(requests.get("/api/sessions/synthetic-root/snapshot")).toBe(
+    before.get("/api/sessions/synthetic-root/snapshot")
+  );
+  expect(requests.get("/api/sessions/synthetic-root/agents")).toBe(
+    before.get("/api/sessions/synthetic-root/agents")
+  );
+  expect(requests.get("/api/sessions/synthetic-root/report")).toBe(
+    before.get("/api/sessions/synthetic-root/report")
+  );
+});
+
+test("explains missing and unavailable traces in estimated subagent copy", async ({ page }) => {
+  await mockApp(page, {
+    health: async (key, _requestCount, route) => route.fulfill({ json: estimatedWithMissingSubagents(key) })
+  });
+  await page.goto("/?session=synthetic-root");
+
+  const panel = await openHealth(page);
+  const subagents = healthRow(panel, "Subagents");
+  await expect(subagents.locator(".health-row-state")).toHaveText("Partly inferred");
+  await subagents.locator(".health-row-toggle").click();
+  await expect(subagents.locator(".health-explanation")).toContainText("2 traces are missing");
+  await expect(subagents.locator(".health-explanation")).toContainText("1 trace is unavailable");
+});
+
 test("uses the server badge without deriving a replacement from signals", async ({ page }) => {
   await mockApp(page, {
     health: async (key, _requestCount, route) => {
@@ -247,7 +308,7 @@ test("uses the server badge without deriving a replacement from signals", async 
 
   const panel = await openHealth(page);
   const reads = healthRow(panel, "File reads");
-  await expect(reads.locator(".health-row-state")).toHaveText("Unavailable");
+  await expect(reads.locator(".health-row-state")).toHaveText("Cannot determine from this log");
   await expect(reads.locator(".health-technical")).not.toHaveAttribute("open", "");
 });
 
@@ -308,8 +369,8 @@ test("rejects a delayed health response after switching sessions", async ({ page
     "Trace health: some evidence is estimated"
   );
   const panel = await openHealth(page);
-  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Estimated");
-  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Exact");
+  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Partly inferred");
+  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Recorded directly");
   oldHealth.resolve();
   await oldHealthDelivered.promise;
   await page.evaluate(
@@ -320,8 +381,8 @@ test("rejects a delayed health response after switching sessions", async ({ page
     "Trace health: some evidence is estimated"
   );
   await expect(healthTrigger(page).locator(".dock-dot-estimated")).toHaveCount(1);
-  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Estimated");
-  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Exact");
+  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Partly inferred");
+  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Recorded directly");
 });
 
 test("keeps health failure local and retries only the health request", async ({ page }) => {
@@ -391,7 +452,7 @@ test("loads refreshed health only after a successful fresh scan and snapshot", a
   );
   const initialPanel = await openHealth(page);
   const estimatedReads = healthRow(initialPanel, "File reads");
-  await expect(estimatedReads.locator(".health-row-state")).toHaveText("Estimated");
+  await expect(estimatedReads.locator(".health-row-state")).toHaveText("Partly inferred");
   await expect(estimatedReads.locator(".health-technical")).not.toHaveAttribute("open", "");
   await estimatedReads.locator(".health-row-toggle").click();
   await expect(estimatedReads.locator(".health-explanation")).toContainText("2 reads");
@@ -412,7 +473,7 @@ test("loads refreshed health only after a successful fresh scan and snapshot", a
     "Trace health: evidence recorded directly where applicable"
   );
   const refreshedPanel = await openHealth(page);
-  await expect(healthRow(refreshedPanel, "File reads").locator(".health-row-state")).toHaveText("Exact");
+  await expect(healthRow(refreshedPanel, "File reads").locator(".health-row-state")).toHaveText("Recorded directly");
   expect(order.indexOf("fresh-snapshot-delivered")).toBeGreaterThan(
     order.indexOf("fresh-snapshot-started")
   );
@@ -443,6 +504,81 @@ test("does not refresh health after a failed fresh scan", async ({ page }) => {
   await page.getByRole("button", { name: "Rescan sessions" }).click();
   await expect(page.locator(".toast.error")).toContainText("fresh scan unavailable");
   expect(healthRequests).toBe(1);
+  await expect(healthTrigger(page)).toHaveAttribute(
+    "aria-label",
+    "Trace health: evidence recorded directly where applicable"
+  );
+});
+
+test("does not refresh health after a successful scan whose snapshot fails", async ({ page }) => {
+  let healthRequests = 0;
+  await mockApp(page, {
+    sessions: async (_fresh, route) => route.fulfill({ json: [fixtures.session] }),
+    snapshot: async (key, requestCount, route) => {
+      if (requestCount === 2) {
+        await route.fulfill({ status: 503, body: "fresh snapshot unavailable" });
+      } else {
+        await route.fulfill({ json: snapshotFor(key) });
+      }
+    },
+    health: async (key, _requestCount, route) => {
+      healthRequests++;
+      await route.fulfill({ json: healthFixture("exact", key) });
+    }
+  });
+  await page.goto("/?session=synthetic-root");
+  await expect(healthTrigger(page)).toHaveAttribute(
+    "aria-label",
+    "Trace health: evidence recorded directly where applicable"
+  );
+
+  await page.getByRole("button", { name: "Rescan sessions" }).click();
+  await expect(page.locator(".toast.error")).toContainText("fresh snapshot unavailable");
+  expect(healthRequests).toBe(1);
+  await expect(page.locator(".deck-pos-count")).toHaveText("4 / 4");
+});
+
+test("loads fallback-session health only after its fresh snapshot applies", async ({ page }) => {
+  const fallbackSnapshot = deferred();
+  const fallbackSnapshotStarted = deferred();
+  const order: string[] = [];
+  let fallbackHealthRequests = 0;
+  await mockApp(page, {
+    sessions: async (fresh, route) => {
+      await route.fulfill({ json: fresh ? [nextSession] : [fixtures.session] });
+    },
+    snapshot: async (key, _requestCount, route) => {
+      if (key === nextSession.key) {
+        order.push("fallback-snapshot-started");
+        fallbackSnapshotStarted.resolve();
+        await fallbackSnapshot.promise;
+        order.push("fallback-snapshot-delivered");
+      }
+      await route.fulfill({ json: snapshotFor(key) });
+    },
+    health: async (key, _requestCount, route) => {
+      if (key === nextSession.key) {
+        fallbackHealthRequests++;
+        order.push("fallback-health");
+      }
+      await route.fulfill({ json: healthFixture("exact", key) });
+    }
+  });
+  await page.goto("/?session=synthetic-root");
+  await expect(healthTrigger(page)).toHaveAttribute(
+    "aria-label",
+    "Trace health: evidence recorded directly where applicable"
+  );
+
+  await page.getByRole("button", { name: "Rescan sessions" }).click();
+  await fallbackSnapshotStarted.promise;
+  expect(fallbackHealthRequests).toBe(0);
+  expect(order).toEqual(["fallback-snapshot-started"]);
+  fallbackSnapshot.resolve();
+
+  await expect.poll(() => fallbackHealthRequests).toBe(1);
+  expect(order).toEqual(["fallback-snapshot-started", "fallback-snapshot-delivered", "fallback-health"]);
+  await expect(page.locator(".session-row.active")).toContainText(nextSession.title);
   await expect(healthTrigger(page)).toHaveAttribute(
     "aria-label",
     "Trace health: evidence recorded directly where applicable"

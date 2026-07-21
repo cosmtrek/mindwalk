@@ -2069,6 +2069,10 @@ dd {
   opacity: 0.45;
 }
 
+.health-row-retry {
+  margin: 0 8px 7px 23px;
+}
+
 /* agent lens picker: actor identity is typographic; color is reserved for
    availability and the single current-lens signature */
 .agents-head-note {

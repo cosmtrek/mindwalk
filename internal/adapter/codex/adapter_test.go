@@ -423,7 +423,7 @@ func TestCommandOutputStatus(t *testing.T) {
 		{output: "Script failed\nExit code: 0", wantFailed: true, wantKnown: true},
 		{output: "plain output", wantKnown: false},
 		{output: `{"message":"Wait timed out after 20000ms","timed_out":true}`, wantFailed: true, wantKnown: true},
-		{output: `{"message":"still running","timed_out":false}`, wantKnown: true},
+		{output: `{"message":"still running","timed_out":false}`, wantKnown: false},
 		{output: "apply_patch verification failed: Failed to find expected lines in a.go", wantFailed: true, wantKnown: true},
 		{output: "Wall time: 8.9 seconds\naborted by user", wantFailed: true, wantKnown: true},
 		{output: "Wall time: 8.9 seconds\nOutput:\naborted by user", wantKnown: false},
@@ -436,6 +436,39 @@ func TestCommandOutputStatus(t *testing.T) {
 		if got := commandOutputFailed(tt.output); got != tt.wantFailed {
 			t.Errorf("commandOutputFailed(%q) = %v, want %v", tt.output, got, tt.wantFailed)
 		}
+	}
+}
+
+func TestParseCodexTimeoutOutcomeEvidence(t *testing.T) {
+	dir := t.TempDir()
+	session := filepath.Join(dir, "rollout-2026-07-21T00-00-00-codex-timeout.jsonl")
+	writeJSONL(t, session,
+		map[string]any{
+			"timestamp": "2026-07-21T00:00:00Z",
+			"type":      "session_meta",
+			"payload":   map[string]any{"id": "codex-timeout", "cwd": "/tmp"},
+		},
+		call("2026-07-21T00:00:01Z", "fc-timeout", "call-timeout", "exec_command", map[string]any{"cmd": "go test ./..."}),
+		output("2026-07-21T00:00:02Z", "call-timeout", `{"message":"Wait timed out after 20000ms","timed_out":true}`),
+		call("2026-07-21T00:00:03Z", "fc-running", "call-running", "exec_command", map[string]any{"cmd": "go test ./..."}),
+		output("2026-07-21T00:00:04Z", "call-running", `{"message":"still running","timed_out":false}`),
+	)
+
+	trace, err := Adapter{Dir: dir}.Parse(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.Events) != 2 || !trace.Events[0].IsError || trace.Events[1].IsError {
+		t.Fatalf("events = %#v", trace.Events)
+	}
+	want := model.VerificationEvidence{
+		Quality:            model.ObservabilityEstimated,
+		RecognizedCount:    2,
+		KnownResultCount:   1,
+		UnknownResultCount: 1,
+	}
+	if got := trace.HealthEvidence.Verification; got != want {
+		t.Fatalf("verification evidence = %#v, want %#v", got, want)
 	}
 }
 

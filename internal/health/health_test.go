@@ -86,17 +86,22 @@ func TestBuildVerificationSignals(t *testing.T) {
 		want  model.VerificationHealth
 	}{
 		{
-			name:  "exact known outcomes",
-			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(2, 2, 0, 0)),
+			name:  "exact recognition and known outcomes",
+			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(model.ObservabilityExact, 2, 2, 0, 0)),
 			want:  verificationHealth(model.HealthReady, model.ObservabilityExact, model.HealthReasonStructuredVerify, 2, 2, 0, 0),
 		},
 		{
-			name:  "estimated unknown outcome",
-			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(3, 2, 1, 4)),
+			name:  "estimated recognition with known outcomes",
+			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(model.ObservabilityEstimated, 2, 2, 0, 0)),
+			want:  verificationHealth(model.HealthReady, model.ObservabilityEstimated, model.HealthReasonVerificationInferred, 2, 2, 0, 0),
+		},
+		{
+			name:  "unknown outcome",
+			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(model.ObservabilityExact, 3, 2, 1, 4)),
 			want:  verificationHealth(model.HealthReady, model.ObservabilityEstimated, model.HealthReasonVerificationUnknown, 3, 2, 1, 4),
 		},
 		{
-			name:  "unavailable evidence for recognized command",
+			name:  "no usable signal",
 			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withMissingVerificationEvidence(2)),
 			want:  verificationHealth(model.HealthReady, model.ObservabilityUnavailable, model.HealthReasonVerificationUnavailable, 2, 0, 0, 0),
 		},
@@ -154,6 +159,15 @@ func TestBuildSubagentSignals(t *testing.T) {
 			want:  subagentHealth(model.HealthReady, model.ObservabilityExact, model.HealthReasonExactAgentLinks, 2, 0, 0, 0),
 		},
 		{
+			name:  "exact nested descendants compare root launches with direct children",
+			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withSubagents(1)),
+			graph: graphWith(
+				model.AgentNode{ID: "child", ParentID: "main", Kind: model.AgentKindSubagent, LinkQuality: model.AgentLinkQualityExact, TraceAvailability: model.TraceAvailabilityAvailable},
+				model.AgentNode{ID: "grandchild", ParentID: "child", Kind: model.AgentKindSubagent, LinkQuality: model.AgentLinkQualityExact, TraceAvailability: model.TraceAvailabilityAvailable},
+			),
+			want: subagentHealth(model.HealthReady, model.ObservabilityExact, model.HealthReasonExactAgentLinks, 2, 0, 0, 0),
+		},
+		{
 			name:  "estimated mixed children",
 			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withSubagents(4)),
 			graph: graphWith(
@@ -185,22 +199,22 @@ func TestBuildBadges(t *testing.T) {
 	}{
 		{
 			name:  "no badge for exact and not applicable",
-			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(0, 0, 0, 0), withSubagents(0)),
+			trace: traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(model.ObservabilityExact, 0, 0, 0, 0), withSubagents(0)),
 			want:  "",
 		},
 		{
 			name:  "estimated badge",
-			trace: traceWith(model.ObservabilityEstimated, model.ObservabilityExact, withVerification(0, 0, 0, 0), withSubagents(0)),
+			trace: traceWith(model.ObservabilityEstimated, model.ObservabilityExact, withVerification(model.ObservabilityExact, 0, 0, 0, 0), withSubagents(0)),
 			want:  model.HealthBadgeEstimated,
 		},
 		{
 			name:  "limited badge for unavailable",
-			trace: traceWith(model.ObservabilityUnavailable, model.ObservabilityExact, withVerification(0, 0, 0, 0), withSubagents(0)),
+			trace: traceWith(model.ObservabilityUnavailable, model.ObservabilityExact, withVerification(model.ObservabilityExact, 0, 0, 0, 0), withSubagents(0)),
 			want:  model.HealthBadgeLimited,
 		},
 		{
 			name:     "limited badge for failed",
-			trace:    traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(0, 0, 0, 0), withSubagents(1)),
+			trace:    traceWith(model.ObservabilityExact, model.ObservabilityExact, withVerification(model.ObservabilityExact, 0, 0, 0, 0), withSubagents(1)),
 			graphErr: errors.New("graph failed"),
 			want:     model.HealthBadgeLimited,
 		},
@@ -220,7 +234,7 @@ func TestBuildBadges(t *testing.T) {
 }
 
 func TestBuildDoesNotMutateInputs(t *testing.T) {
-	trace := traceWith(model.ObservabilityEstimated, model.ObservabilityEstimated, withVerification(1, 0, 1, 2), withSubagents(1))
+	trace := traceWith(model.ObservabilityEstimated, model.ObservabilityEstimated, withVerification(model.ObservabilityEstimated, 1, 0, 1, 2), withSubagents(1))
 	graph := graphWith(agent(model.AgentLinkQualityDerived, model.TraceAvailabilityMissing))
 	beforeTrace, _ := json.Marshal(trace)
 	beforeGraph, _ := json.Marshal(graph)
@@ -263,11 +277,12 @@ func withWeakRead() func(*model.Trace) {
 	}
 }
 
-func withVerification(recognized, known, unknown, editsAfterLastVerify int) func(*model.Trace) {
+func withVerification(quality string, recognized, known, unknown, editsAfterLastVerify int) func(*model.Trace) {
 	return func(trace *model.Trace) {
 		trace.Stats.Actions.Verify = recognized
 		trace.Stats.EditsAfterLastVerify = editsAfterLastVerify
 		trace.HealthEvidence.Verification = model.VerificationEvidence{
+			Quality:            quality,
 			RecognizedCount:    recognized,
 			KnownResultCount:   known,
 			UnknownResultCount: unknown,
@@ -288,7 +303,12 @@ func withSubagents(count int) func(*model.Trace) {
 }
 
 func graphWith(children ...model.AgentNode) *model.AgentGraph {
-	agents := []model.AgentNode{{Kind: model.AgentKindMain}}
+	agents := []model.AgentNode{{ID: "main", Kind: model.AgentKindMain}}
+	for i := range children {
+		if children[i].ParentID == "" {
+			children[i].ParentID = "main"
+		}
+	}
 	agents = append(agents, children...)
 	return &model.AgentGraph{Agents: agents}
 }

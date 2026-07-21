@@ -84,6 +84,12 @@ export function HealthPanel({ health, loading, error, onRetry, onClose }: Health
                 <p className="health-explanation" id={explanationID} hidden={!open}>
                   {row.description}
                 </p>
+                {row.signal.availability === "failed" ? (
+                  <button className="health-retry health-row-retry" onClick={onRetry} disabled={loading}>
+                    <RefreshCw size={13} />
+                    {loading ? "Retrying…" : "Retry trace health"}
+                  </button>
+                ) : null}
                 <details className="health-technical">
                   <summary>Technical details</summary>
                   <dl>
@@ -186,11 +192,11 @@ function stateLabel(state: keyof typeof PRIORITY): string {
     case "failed":
       return "Failed";
     case "unavailable":
-      return "Unavailable";
+      return "Cannot determine from this log";
     case "estimated":
-      return "Estimated";
+      return "Partly inferred";
     case "exact":
-      return "Exact";
+      return "Recorded directly";
     case "not-applicable":
       return "Not needed";
   }
@@ -229,7 +235,17 @@ function subagentDescription(signal: SubagentHealth): string {
   if (signal.availability === "not-applicable") return "This session did not launch subagents.";
   if (signal.availability === "failed") return "Mindwalk could not load subagent evidence. Retry trace health to try again.";
   if (signal.quality === "unavailable") return "Subagent activity exists, but this log cannot link it to usable traces.";
-  if (signal.quality === "estimated") return `Mindwalk linked ${count(signal.exactCount, "subagent trace")} directly and inferred ${count(signal.derivedCount, "link")} from trace context.`;
+  if (signal.quality === "estimated") {
+    const limitations: string[] = [];
+    if (signal.missingTraceCount > 0) {
+      limitations.push(`${count(signal.missingTraceCount, "trace")} ${signal.missingTraceCount === 1 ? "is" : "are"} missing`);
+    }
+    if (signal.unavailableTraceCount > 0) {
+      limitations.push(`${count(signal.unavailableTraceCount, "trace")} ${signal.unavailableTraceCount === 1 ? "is" : "are"} unavailable`);
+    }
+    const limitationText = limitations.length ? `; ${limitations.join(" and ")}` : "";
+    return `Mindwalk linked ${count(signal.exactCount, "subagent trace")} directly and inferred ${count(signal.derivedCount, "link")} from trace context${limitationText}.`;
+  }
   return `Mindwalk linked ${count(signal.exactCount, "subagent trace")} directly.`;
 }
 

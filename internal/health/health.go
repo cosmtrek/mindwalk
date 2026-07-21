@@ -70,18 +70,19 @@ func buildErrors(trace *model.Trace) model.ErrorHealth {
 func buildVerification(trace *model.Trace) model.VerificationHealth {
 	evidence := trace.HealthEvidence.Verification
 	recognized := evidence.RecognizedCount
-	if trace.Stats.Actions.Verify > 0 && recognized == 0 {
+	if recognized == 0 && trace.Stats.Actions.Verify > 0 {
 		recognized = trace.Stats.Actions.Verify
-		return model.VerificationHealth{
-			HealthSignal:         signal(model.HealthReady, model.ObservabilityUnavailable, model.HealthReasonVerificationUnavailable, verificationAffects),
-			RecognizedCount:      recognized,
-			EditsAfterLastVerify: trace.Stats.EditsAfterLastVerify,
-		}
 	}
 
-	quality, reason := model.ObservabilityExact, model.HealthReasonStructuredVerify
-	if evidence.UnknownResultCount > 0 {
+	quality, reason := model.ObservabilityUnavailable, model.HealthReasonVerificationUnavailable
+	switch {
+	case evidence.Quality != model.ObservabilityExact && evidence.Quality != model.ObservabilityEstimated:
+	case evidence.UnknownResultCount > 0 || evidence.KnownResultCount != recognized:
 		quality, reason = model.ObservabilityEstimated, model.HealthReasonVerificationUnknown
+	case evidence.Quality == model.ObservabilityEstimated:
+		quality, reason = model.ObservabilityEstimated, model.HealthReasonVerificationInferred
+	default:
+		quality, reason = model.ObservabilityExact, model.HealthReasonStructuredVerify
 	}
 	return model.VerificationHealth{
 		HealthSignal:         signal(model.HealthReady, quality, reason, verificationAffects),
@@ -104,13 +105,22 @@ func buildSubagents(trace *model.Trace, graph *model.AgentGraph, graphErr error)
 	}
 
 	summary := model.SubagentHealth{HealthSignal: signal(model.HealthReady, model.ObservabilityExact, model.HealthReasonExactAgentLinks, subagentAffects)}
-	children := 0
+	rootID := ""
+	for _, node := range graph.Agents {
+		if node.Kind == model.AgentKindMain {
+			rootID = node.ID
+			break
+		}
+	}
+	rootChildren := 0
 	allExactAvailable := true
 	for _, node := range graph.Agents {
 		if node.Kind == model.AgentKindMain {
 			continue
 		}
-		children++
+		if node.ParentID == rootID {
+			rootChildren++
+		}
 		if node.LinkQuality != model.AgentLinkQualityExact || node.TraceAvailability != model.TraceAvailabilityAvailable {
 			allExactAvailable = false
 		}
@@ -127,7 +137,7 @@ func buildSubagents(trace *model.Trace, graph *model.AgentGraph, graphErr error)
 			summary.UnavailableTraceCount++
 		}
 	}
-	if children != trace.Stats.Subagents || !allExactAvailable {
+	if rootChildren != trace.Stats.Subagents || !allExactAvailable {
 		summary.Quality = model.ObservabilityEstimated
 		summary.Reason = model.HealthReasonMixedAgentLinks
 	}

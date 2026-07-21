@@ -14,6 +14,7 @@ const (
 	HealthReasonErrorsInferred          = "errors-inferred-from-output"
 	HealthReasonErrorsUnavailable       = "error-signal-unavailable"
 	HealthReasonStructuredVerify        = "structured-verification-results"
+	HealthReasonVerificationInferred    = "verification-command-recognition-inferred"
 	HealthReasonVerificationUnknown     = "some-verification-results-unknown"
 	HealthReasonVerificationUnavailable = "verification-signal-unavailable"
 	HealthReasonNoSubagents             = "no-subagents"
@@ -81,6 +82,7 @@ type TraceHealthEvidence struct {
 }
 
 type VerificationEvidence struct {
+	Quality            string
 	RecognizedCount    int
 	KnownResultCount   int
 	UnknownResultCount int

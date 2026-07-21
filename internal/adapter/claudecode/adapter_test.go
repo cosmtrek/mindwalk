@@ -112,7 +112,12 @@ func TestParseVerificationOutcomeEvidence(t *testing.T) {
 		t.Fatalf("event errors = %#v", trace.Events)
 	}
 	got := trace.HealthEvidence.Verification
-	want := model.VerificationEvidence{RecognizedCount: 3, KnownResultCount: 2, UnknownResultCount: 1}
+	want := model.VerificationEvidence{
+		Quality:            model.ObservabilityEstimated,
+		RecognizedCount:    3,
+		KnownResultCount:   2,
+		UnknownResultCount: 1,
+	}
 	if got != want {
 		t.Fatalf("verification evidence = %#v, want %#v", got, want)
 	}

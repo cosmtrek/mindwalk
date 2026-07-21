@@ -431,7 +431,12 @@ func TestBuildEventVerificationEvidence(t *testing.T) {
 	BuildEvent(trace, call, ToolResult{})
 
 	got := trace.HealthEvidence.Verification
-	want := model.VerificationEvidence{RecognizedCount: 3, KnownResultCount: 2, UnknownResultCount: 1}
+	want := model.VerificationEvidence{
+		Quality:            model.ObservabilityEstimated,
+		RecognizedCount:    3,
+		KnownResultCount:   2,
+		UnknownResultCount: 1,
+	}
 	if got != want {
 		t.Fatalf("verification evidence = %#v, want %#v", got, want)
 	}
