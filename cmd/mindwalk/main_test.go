@@ -124,6 +124,79 @@ func TestHealthCommandDefaultSessionDirectoryIncludesAuxiliaryClaudeSession(t *t
 	}
 }
 
+func TestHealthCommandSymlinkInsideDefaultDirectoryToExternalSessionLeavesAgentContextUnavailable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	external := writeHealthFixture(t, filepath.Join(t.TempDir(), "standalone.jsonl"),
+		`{"type":"assistant","timestamp":"2026-07-21T00:00:00Z","sessionId":"standalone-root","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-child","name":"Task","input":{"prompt":"inspect"}}]}}`,
+	)
+	link := filepath.Join(home, ".claude", "projects", "demo", "linked.jsonl")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, link); err != nil {
+		t.Fatal(err)
+	}
+
+	summary := runHealthJSON(t, link)
+	if got := summary.Signals.Subagents.Reason; got != model.HealthReasonAgentContextMissing {
+		t.Fatalf("subagent reason = %q, want %q; signal = %#v", got, model.HealthReasonAgentContextMissing, summary.Signals.Subagents)
+	}
+	if summary.Signals.Subagents.MissingTraceCount != 0 || summary.Signals.Subagents.UnavailableTraceCount != 0 {
+		t.Fatalf("symlinked standalone session invented graph trace state: %#v", summary.Signals.Subagents)
+	}
+}
+
+func TestHealthCommandExternalSymlinkToDefaultSessionGetsAuxiliaryClaudeContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	projectDir := filepath.Join(home, ".claude", "projects", "demo")
+	root := writeHealthFixture(t, filepath.Join(projectDir, "root-id.jsonl"),
+		`{"type":"assistant","timestamp":"2026-07-21T00:00:00Z","sessionId":"root-id","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-child","name":"Task","input":{"description":"Child","subagent_type":"Explore","prompt":"inspect"}}]}}`,
+	)
+	childDir := filepath.Join(projectDir, "root-id", "subagents")
+	writeHealthFixture(t, filepath.Join(childDir, "agent-child.jsonl"),
+		`{"type":"user","timestamp":"2026-07-21T00:00:01Z","sessionId":"root-id","agentId":"child-id","isSidechain":true,"message":{"role":"user","content":"internal"}}`,
+	)
+	writeHealthFixture(t, filepath.Join(childDir, "agent-child.meta.json"),
+		`{"agentType":"Explore","description":"Child","toolUseId":"call-child","spawnDepth":1}`,
+	)
+	externalLink := filepath.Join(t.TempDir(), "linked-root.jsonl")
+	if err := os.Symlink(root, externalLink); err != nil {
+		t.Fatal(err)
+	}
+
+	summary := runHealthJSON(t, externalLink)
+	if summary.Signals.Subagents.Reason != model.HealthReasonExactAgentLinks || summary.Signals.Subagents.ExactCount != 1 {
+		t.Fatalf("external symlink did not receive default-directory graph context: %#v", summary.Signals.Subagents)
+	}
+	if summary.Signals.Subagents.MissingTraceCount != 0 || summary.Signals.Subagents.UnavailableTraceCount != 0 {
+		t.Fatalf("external symlink lost its auxiliary trace: %#v", summary.Signals.Subagents)
+	}
+}
+
+func TestHealthCommandDefaultSessionDirectoryIncludesAuxiliaryCodexSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sessionsDir := filepath.Join(home, ".codex", "sessions", "2026", "07", "21")
+	root := writeHealthFixture(t, filepath.Join(sessionsDir, "root.jsonl"),
+		`{"timestamp":"2026-07-21T00:00:00Z","type":"session_meta","payload":{"id":"root-session","cwd":"/tmp"}}`,
+		`{"timestamp":"2026-07-21T00:00:01Z","type":"response_item","payload":{"type":"function_call","id":"fc-child","name":"spawn_agent","arguments":"{\"agent_type\":\"reviewer\",\"message\":\"review\"}","call_id":"call-child"}}`,
+		`{"timestamp":"2026-07-21T00:00:02Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-child","output":"{\"agent_id\":\"agent-child\",\"nickname\":\"Child\"}"}}`,
+	)
+	writeHealthFixture(t, filepath.Join(sessionsDir, "child.jsonl"),
+		`{"timestamp":"2026-07-21T00:00:03Z","type":"session_meta","payload":{"id":"agent-child","parent_thread_id":"root-session","thread_source":"subagent","source":{"subagent":{"thread_spawn":{"parent_thread_id":"root-session","depth":1,"agent_nickname":"Child","agent_role":"reviewer"}}}}}`,
+	)
+
+	summary := runHealthJSON(t, root)
+	if summary.Signals.Subagents.Reason != model.HealthReasonExactAgentLinks || summary.Signals.Subagents.ExactCount != 1 {
+		t.Fatalf("Codex auxiliary child was not discovered: %#v", summary.Signals.Subagents)
+	}
+	if summary.Signals.Subagents.MissingTraceCount != 0 || summary.Signals.Subagents.UnavailableTraceCount != 0 {
+		t.Fatalf("Codex auxiliary trace state = %#v", summary.Signals.Subagents)
+	}
+}
+
 func TestHealthCommandRejectsMissingSession(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.jsonl")
 	if err := healthCommand([]string{missing}); err == nil {
@@ -149,6 +222,21 @@ func writeHealthFixture(t *testing.T, path string, lines ...string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func runHealthJSON(t *testing.T, path string) model.SessionHealth {
+	t.Helper()
+	stdout, err := captureHealthStdout(t, func() error {
+		return healthCommand([]string{path, "--json"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary model.SessionHealth
+	if err := json.Unmarshal([]byte(stdout), &summary); err != nil {
+		t.Fatal(err)
+	}
+	return summary
 }
 
 func captureHealthStdout(t *testing.T, fn func() error) (string, error) {

@@ -252,6 +252,9 @@ func loadHealthInput(path string) (adapter.Source, model.SessionMeta, *model.Tra
 	if err != nil {
 		return nil, model.SessionMeta{}, nil, err
 	}
+	if resolvedPath, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolvedPath
+	}
 	return loadSession(absPath)
 }
 
@@ -281,8 +284,12 @@ func parseTrace(path string) (*model.Trace, error) {
 }
 
 func summarizeSessionDirectory(source adapter.Source) ([]model.SessionMeta, error) {
+	sessionDir, err := filepath.EvalSymlinks(source.SessionDir())
+	if err != nil {
+		return nil, err
+	}
 	var catalog []model.SessionMeta
-	err := filepath.WalkDir(source.SessionDir(), func(path string, entry os.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(sessionDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -303,7 +310,15 @@ func pathWithin(path, dir string) bool {
 	if err != nil {
 		return false
 	}
+	absPath, err = filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return false
+	}
 	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	absDir, err = filepath.EvalSymlinks(absDir)
 	if err != nil {
 		return false
 	}
