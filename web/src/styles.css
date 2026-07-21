@@ -1624,19 +1624,6 @@ dd {
     font-size: 1.2rem;
   }
 
-  .dock {
-    /* bottom sheet on narrow screens, pinned to the visual viewport so it
-       never floats over the HUD readout */
-    position: fixed;
-    top: auto;
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
-    z-index: 30;
-    flex-direction: row-reverse;
-    align-items: flex-end;
-  }
-
   .dock-panel {
     position: static;
     flex: 1;
@@ -1866,17 +1853,44 @@ dd {
   min-width: 0;
 }
 
-@media (max-width: 520px) {
+@media (max-width: 900px) {
+  .dock {
+    /* bottom sheet on narrow screens, pinned inside the stage viewport so it
+       stays above the playback deck */
+    position: absolute;
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    z-index: 30;
+    flex-direction: row-reverse;
+    align-items: flex-end;
+  }
+
   .dock-pop-health {
-    position: fixed;
-    inset: 12px 12px auto;
+    position: absolute;
+    top: auto;
+    right: 54px;
+    bottom: 0;
+    left: auto;
+    box-sizing: border-box;
+    width: min(312px, 100%);
     min-width: 0;
-    max-height: calc(100dvh - 24px);
+    max-height: calc(100dvh - 208px);
     overflow-y: auto;
   }
 
   .health-panel {
     width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .dock-pop-health {
+    position: fixed;
+    inset: 12px 12px auto;
+    width: auto;
+    max-height: calc(100dvh - 24px);
   }
 }
 

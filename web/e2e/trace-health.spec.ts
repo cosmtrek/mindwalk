@@ -300,6 +300,37 @@ test("explains missing and unavailable traces in estimated subagent copy", async
   await expect(subagents.locator(".health-explanation")).toContainText("1 trace is unavailable");
 });
 
+test("keeps trace health inside the intermediate viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 820 });
+  await mockApp(page);
+  await page.goto("/?session=synthetic-root");
+
+  await openHealth(page);
+  const bounds = await page.locator(".dock-pop-health").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const dockRect = element.parentElement?.getBoundingClientRect();
+    const deckRect = document.querySelector(".deck")?.getBoundingClientRect();
+    const stripRect = document.querySelector(".dock-strip")?.getBoundingClientRect();
+    return {
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+      dockBottom: dockRect?.bottom ?? 0,
+      deckTop: deckRect?.top ?? 0,
+      stripLeft: stripRect?.left ?? 0,
+      viewportHeight: window.innerHeight
+    };
+  });
+
+  expect(bounds.left).toBeGreaterThanOrEqual(0);
+  expect(bounds.stripLeft - bounds.right).toBe(10);
+  expect(bounds.top).toBeGreaterThanOrEqual(0);
+  expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
+  expect(bounds.bottom).toBeLessThanOrEqual(bounds.deckTop);
+  expect(bounds.dockBottom).toBeLessThanOrEqual(bounds.deckTop);
+});
+
 test("uses the server badge without deriving a replacement from signals", async ({ page }) => {
   await mockApp(page, {
     health: async (key, _requestCount, route) => {
