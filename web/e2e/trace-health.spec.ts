@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { expect, test, type Locator, type Page, type Route } from "playwright/test";
+import {
+  expect,
+  test as base,
+  type ConsoleMessage,
+  type Locator,
+  type Page,
+  type Route
+} from "playwright/test";
 
 const fixtures = JSON.parse(
   readFileSync(
@@ -8,6 +15,21 @@ const fixtures = JSON.parse(
     "utf8"
   )
 );
+
+const test = base.extend<{ runtimeErrors: string[] }>({
+  runtimeErrors: async ({ page }, use) => {
+    const runtimeErrors: string[] = [];
+    const onConsole = (message: ConsoleMessage) => {
+      if (message.type() === "error") runtimeErrors.push(message.text());
+    };
+    const onPageError = (error: Error) => runtimeErrors.push(error.message);
+    page.on("console", onConsole);
+    page.on("pageerror", onPageError);
+    await use(runtimeErrors);
+    page.off("console", onConsole);
+    page.off("pageerror", onPageError);
+  }
+});
 
 const nextSession = {
   ...fixtures.session,
@@ -103,6 +125,10 @@ function unavailableWithAgentFailure(key: string) {
   return health;
 }
 
+function estimatedBadgeWithUnavailableSignals(key: string) {
+  return { ...healthFixture("unavailable", key), badge: "estimated" };
+}
+
 function healthTrigger(page: Page): Locator {
   return page.locator(".dock-strip").getByRole("button", { name: /Trace health/ });
 }
@@ -118,21 +144,15 @@ function healthRow(panel: Locator, title: string): Locator {
   return panel.locator(".health-row").filter({ hasText: title });
 }
 
-function collectRuntimeErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("pageerror", (error) => errors.push(error.message));
-  return errors;
-}
-
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.clear());
 });
 
+test.afterEach(async ({ runtimeErrors }) => {
+  expect(runtimeErrors).toEqual([]);
+});
+
 test("shows failed and unavailable as distinct evidence states at compact width", async ({ page }) => {
-  const runtimeErrors = collectRuntimeErrors(page);
   await page.setViewportSize({ width: 320, height: 760 });
   await mockApp(page, {
     health: async (key, _requestCount, route) => route.fulfill({ json: unavailableWithAgentFailure(key) })
@@ -155,8 +175,26 @@ test("shows failed and unavailable as distinct evidence states at compact width"
   const failed = healthRow(panel, "Subagents");
   await expect(unavailable.locator(".health-row-state")).toHaveText("Unavailable");
   await expect(unavailable.locator(".health-signal-unavailable")).toHaveCount(1);
+  await expect(unavailable).not.toHaveClass(/\berror\b/);
   await expect(unavailable.locator(".error")).toHaveCount(0);
   await expect(unavailable).not.toContainText("No reads occurred");
+  const unavailableColors = await unavailable.evaluate((row) => {
+    const marker = row.querySelector<HTMLElement>(".health-signal-unavailable");
+    const probe = document.createElement("span");
+    probe.style.color = "var(--alarm)";
+    document.body.append(probe);
+    const colors = {
+      danger: getComputedStyle(probe).color,
+      row: getComputedStyle(row).color,
+      markerBorder: marker ? getComputedStyle(marker).borderColor : "",
+      markerBackground: marker ? getComputedStyle(marker).backgroundColor : ""
+    };
+    probe.remove();
+    return colors;
+  });
+  expect(unavailableColors.row).not.toBe(unavailableColors.danger);
+  expect(unavailableColors.markerBorder).not.toBe(unavailableColors.danger);
+  expect(unavailableColors.markerBackground).not.toBe(unavailableColors.danger);
   await expect(failed.locator(".health-row-state")).toHaveText("Failed");
   await expect(failed.locator(".health-signal-failed")).toHaveCount(1);
   await expect(page.locator(".city-scene canvas")).toBeVisible();
@@ -192,13 +230,13 @@ test("shows failed and unavailable as distinct evidence states at compact width"
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(320);
-  expect(runtimeErrors).toEqual([]);
 });
 
 test("uses the server badge without deriving a replacement from signals", async ({ page }) => {
-  const runtimeErrors = collectRuntimeErrors(page);
   await mockApp(page, {
-    health: async (key, _requestCount, route) => route.fulfill({ json: healthFixture("estimated", key) })
+    health: async (key, _requestCount, route) => {
+      await route.fulfill({ json: estimatedBadgeWithUnavailableSignals(key) });
+    }
   });
   await page.goto("/?session=synthetic-root");
 
@@ -209,19 +247,11 @@ test("uses the server badge without deriving a replacement from signals", async 
 
   const panel = await openHealth(page);
   const reads = healthRow(panel, "File reads");
-  await expect(reads.locator(".health-row-state")).toHaveText("Estimated");
+  await expect(reads.locator(".health-row-state")).toHaveText("Unavailable");
   await expect(reads.locator(".health-technical")).not.toHaveAttribute("open", "");
-  await reads.locator(".health-row-toggle").click();
-  await expect(reads.locator(".health-explanation")).toContainText("2 reads");
-  await expect(reads.locator(".health-explanation")).toContainText("1 read");
-  await reads.locator("summary").click();
-  await expect(reads.locator("dl")).toContainText("Direct2");
-  await expect(reads.locator("dl")).toContainText("Inferred1");
-  expect(runtimeErrors).toEqual([]);
 });
 
 test("relates the pop trigger to its panel and restores focus on both close paths", async ({ page }) => {
-  const runtimeErrors = collectRuntimeErrors(page);
   await mockApp(page);
   await page.goto("/?session=synthetic-root");
 
@@ -247,7 +277,6 @@ test("relates the pop trigger to its panel and restores focus on both close path
   await page.getByRole("button", { name: "Close trace health" }).click();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toBeFocused();
-  expect(runtimeErrors).toEqual([]);
 });
 
 test("rejects a delayed health response after switching sessions", async ({ page }) => {
@@ -360,6 +389,16 @@ test("loads refreshed health only after a successful fresh scan and snapshot", a
     "aria-label",
     "Trace health: some evidence is estimated"
   );
+  const initialPanel = await openHealth(page);
+  const estimatedReads = healthRow(initialPanel, "File reads");
+  await expect(estimatedReads.locator(".health-row-state")).toHaveText("Estimated");
+  await expect(estimatedReads.locator(".health-technical")).not.toHaveAttribute("open", "");
+  await estimatedReads.locator(".health-row-toggle").click();
+  await expect(estimatedReads.locator(".health-explanation")).toContainText("2 reads");
+  await expect(estimatedReads.locator(".health-explanation")).toContainText("1 read");
+  await estimatedReads.locator("summary").click();
+  await expect(estimatedReads.locator("dl")).toContainText("Direct2");
+  await expect(estimatedReads.locator("dl")).toContainText("Inferred1");
 
   await page.getByRole("button", { name: "Rescan sessions" }).click();
   await freshSnapshotStarted.promise;
@@ -372,6 +411,8 @@ test("loads refreshed health only after a successful fresh scan and snapshot", a
     "aria-label",
     "Trace health: evidence recorded directly where applicable"
   );
+  const refreshedPanel = await openHealth(page);
+  await expect(healthRow(refreshedPanel, "File reads").locator(".health-row-state")).toHaveText("Exact");
   expect(order.indexOf("fresh-snapshot-delivered")).toBeGreaterThan(
     order.indexOf("fresh-snapshot-started")
   );
