@@ -230,6 +230,14 @@ test("shows failed and unavailable as distinct evidence states at compact width"
       .locator(".health-row-toggle")
       .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-expanded")))
   ).toEqual(["false", "false", "false", "false"]);
+  const explanationControls = await panel
+    .locator(".health-row-toggle")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-controls")));
+  expect(explanationControls.every(Boolean)).toBe(true);
+  expect(new Set(explanationControls).size).toBe(4);
+  for (const explanationID of explanationControls) {
+    await expect(panel.locator(`.health-explanation[id="${explanationID}"]`)).toHaveCount(1);
+  }
   expect(await panel.locator(".health-technical").evaluateAll((nodes) => nodes.map((node) => node.hasAttribute("open")))).toEqual([
     false,
     false,
@@ -286,6 +294,7 @@ test("relates the pop trigger to its panel and restores focus on both close path
 test("rejects a delayed health response after switching sessions", async ({ page }) => {
   const oldHealth = deferred();
   const oldHealthStarted = deferred();
+  const oldHealthDelivered = deferred();
   await mockApp(
     page,
     {
@@ -293,7 +302,8 @@ test("rejects a delayed health response after switching sessions", async ({ page
         if (key === fixtures.session.key) {
           oldHealthStarted.resolve();
           await oldHealth.promise;
-          await route.fulfill({ json: mixedHealth(key, "limited") });
+          await route.fulfill({ json: { ...exactHealth(key), badge: "limited" } });
+          oldHealthDelivered.resolve();
           return;
         }
         await route.fulfill({ json: mixedHealth(key, "estimated") });
@@ -309,12 +319,21 @@ test("rejects a delayed health response after switching sessions", async ({ page
     "aria-label",
     "Trace health: some evidence is estimated"
   );
+  const panel = await openHealth(page);
+  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Unavailable");
+  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Failed");
   oldHealth.resolve();
+  await oldHealthDelivered.promise;
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  );
   await expect(healthTrigger(page)).toHaveAttribute(
     "aria-label",
     "Trace health: some evidence is estimated"
   );
   await expect(healthTrigger(page).locator(".dock-dot-estimated")).toHaveCount(1);
+  await expect(healthRow(panel, "File reads").locator(".health-row-state")).toHaveText("Unavailable");
+  await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Failed");
 });
 
 test("keeps health failure local and retries only the health request", async ({ page }) => {
@@ -350,20 +369,23 @@ test("keeps health failure local and retries only the health request", async ({ 
 });
 
 test("loads refreshed health only after a successful fresh scan and snapshot", async ({ page }) => {
-  const freshScan = deferred();
+  const freshSnapshot = deferred();
+  const freshSnapshotStarted = deferred();
   const order: string[] = [];
   let healthRequests = 0;
   await mockApp(page, {
     sessions: async (fresh, route) => {
-      if (fresh) {
-        order.push("fresh-scan");
-        await freshScan.promise;
-      }
+      if (fresh) order.push("fresh-scan");
       await route.fulfill({ json: [fixtures.session] });
     },
     snapshot: async (_key, requestCount, route) => {
-      if (requestCount === 2) order.push("fresh-snapshot");
+      if (requestCount === 2) {
+        order.push("fresh-snapshot-started");
+        freshSnapshotStarted.resolve();
+        await freshSnapshot.promise;
+      }
       await route.fulfill({ json: snapshotFor(fixtures.session.key) });
+      if (requestCount === 2) order.push("fresh-snapshot-delivered");
     },
     health: async (key, _requestCount, route) => {
       healthRequests++;
@@ -379,14 +401,48 @@ test("loads refreshed health only after a successful fresh scan and snapshot", a
   );
 
   await page.getByRole("button", { name: "Rescan sessions" }).click();
-  await expect.poll(() => order.includes("fresh-scan")).toBe(true);
+  await freshSnapshotStarted.promise;
   expect(healthRequests).toBe(1);
-  freshScan.resolve();
+  expect(order).toEqual(["health-1", "fresh-scan", "fresh-snapshot-started"]);
+  freshSnapshot.resolve();
 
+  await expect.poll(() => healthRequests).toBe(2);
   await expect(healthTrigger(page)).toHaveAttribute(
     "aria-label",
     "Trace health: some evidence is estimated"
   );
-  expect(order.indexOf("fresh-snapshot")).toBeGreaterThan(order.indexOf("fresh-scan"));
-  expect(order.indexOf("health-2")).toBeGreaterThan(order.indexOf("fresh-snapshot"));
+  expect(order.indexOf("fresh-snapshot-delivered")).toBeGreaterThan(
+    order.indexOf("fresh-snapshot-started")
+  );
+  expect(order.indexOf("health-2")).toBeGreaterThan(order.indexOf("fresh-snapshot-delivered"));
+});
+
+test("does not refresh health after a failed fresh scan", async ({ page }) => {
+  let healthRequests = 0;
+  await mockApp(page, {
+    sessions: async (fresh, route) => {
+      if (fresh) {
+        await route.fulfill({ status: 503, body: "fresh scan unavailable" });
+      } else {
+        await route.fulfill({ json: [fixtures.session] });
+      }
+    },
+    health: async (key, _requestCount, route) => {
+      healthRequests++;
+      await route.fulfill({ json: exactHealth(key) });
+    }
+  });
+  await page.goto("/?session=synthetic-root");
+  await expect(healthTrigger(page)).toHaveAttribute(
+    "aria-label",
+    "Trace health: evidence recorded directly where applicable"
+  );
+
+  await page.getByRole("button", { name: "Rescan sessions" }).click();
+  await expect(page.locator(".toast.error")).toContainText("fresh scan unavailable");
+  expect(healthRequests).toBe(1);
+  await expect(healthTrigger(page)).toHaveAttribute(
+    "aria-label",
+    "Trace health: evidence recorded directly where applicable"
+  );
 });
