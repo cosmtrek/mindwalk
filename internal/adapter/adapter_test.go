@@ -422,6 +422,21 @@ func TestBuildEventExtractsJSReplTargets(t *testing.T) {
 	}
 }
 
+func TestBuildEventVerificationEvidence(t *testing.T) {
+	trace := &model.Trace{Session: model.TraceSession{Cwd: t.TempDir()}}
+	call := ToolCall{Name: "Bash", Input: map[string]any{"command": "go test ./..."}}
+
+	BuildEvent(trace, call, ToolResult{OutcomeKnown: true})
+	BuildEvent(trace, call, ToolResult{IsError: true, OutcomeKnown: true})
+	BuildEvent(trace, call, ToolResult{})
+
+	got := trace.HealthEvidence.Verification
+	want := model.VerificationEvidence{RecognizedCount: 3, KnownResultCount: 2, UnknownResultCount: 1}
+	if got != want {
+		t.Fatalf("verification evidence = %#v, want %#v", got, want)
+	}
+}
+
 func buildExecEvent(cwd string, input map[string]any) model.Event {
 	trace := &model.Trace{Session: model.TraceSession{Cwd: cwd}}
 	return BuildEvent(trace, ToolCall{Name: "exec", Input: input}, ToolResult{})

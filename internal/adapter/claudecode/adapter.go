@@ -309,7 +309,7 @@ type contentItem struct {
 	Input     map[string]any `json:"input"`
 	ToolUseID string         `json:"tool_use_id"`
 	Content   any            `json:"content"`
-	IsError   bool           `json:"is_error"`
+	IsError   *bool          `json:"is_error"`
 	Text      string         `json:"text"`
 }
 
@@ -380,8 +380,10 @@ func isClaudeLine(line rawLine) bool {
 }
 
 func buildEvent(trace *model.Trace, call adapter.ToolCall, result contentItem) model.Event {
+	isError := result.IsError != nil && *result.IsError
 	return adapter.BuildEvent(trace, call, adapter.ToolResult{
-		Content: adapter.ContentToString(result.Content),
-		IsError: result.IsError,
+		Content:      adapter.ContentToString(result.Content),
+		IsError:      isError,
+		OutcomeKnown: result.IsError != nil,
 	})
 }

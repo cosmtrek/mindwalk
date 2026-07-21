@@ -38,8 +38,9 @@ type ToolCall struct {
 }
 
 type ToolResult struct {
-	Content string
-	IsError bool
+	Content      string
+	IsError      bool
+	OutcomeKnown bool
 }
 
 // SessionKey identifies one session file independently of the harness-level
@@ -190,7 +191,7 @@ func BuildEvent(trace *model.Trace, call ToolCall, result ToolResult) model.Even
 	if targets == nil {
 		targets = []model.Target{}
 	}
-	return model.Event{
+	event := model.Event{
 		Seq:         len(trace.Events),
 		Timestamp:   call.Timestamp,
 		Tool:        call.Name,
@@ -201,6 +202,16 @@ func BuildEvent(trace *model.Trace, call ToolCall, result ToolResult) model.Even
 		IsError:     result.IsError,
 		Summary:     SummarizeTool(call.Name, call.Input, targets, outside, result.IsError),
 	}
+	if event.Action == "verify" {
+		evidence := &trace.HealthEvidence.Verification
+		evidence.RecognizedCount++
+		if result.OutcomeKnown {
+			evidence.KnownResultCount++
+		} else {
+			evidence.UnknownResultCount++
+		}
+	}
+	return event
 }
 
 func ContentToString(v any) string {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cosmtrek/mindwalk/internal/model"
 )
 
 func TestParseSession(t *testing.T) {
@@ -88,6 +90,31 @@ func TestParsePendingToolUsesRemainDeterministic(t *testing.T) {
 				t.Fatalf("run %d order = %#v", i, got)
 			}
 		}
+	}
+}
+
+func TestParseVerificationOutcomeEvidence(t *testing.T) {
+	session := filepath.Join(t.TempDir(), "verification-outcomes.jsonl")
+	writeSession(t, session,
+		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","cwd":"/tmp","sessionId":"verification-outcomes","message":{"role":"user","content":"x"}}`,
+		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","cwd":"/tmp","sessionId":"verification-outcomes","message":{"role":"assistant","content":[{"type":"tool_use","id":"success","name":"Bash","input":{"command":"go test ./..."}},{"type":"tool_use","id":"failure","name":"Bash","input":{"command":"make test"}},{"type":"tool_use","id":"unknown","name":"Bash","input":{"command":"npm test"}}]}}`,
+		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","cwd":"/tmp","sessionId":"verification-outcomes","message":{"role":"user","content":[{"tool_use_id":"success","type":"tool_result","content":"ok","is_error":false},{"tool_use_id":"failure","type":"tool_result","content":"failed","is_error":true},{"tool_use_id":"unknown","type":"tool_result","content":"incomplete"}]}}`,
+	)
+
+	trace, err := (Adapter{}).Parse(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.Events) != 3 {
+		t.Fatalf("events = %#v", trace.Events)
+	}
+	if trace.Events[0].IsError || !trace.Events[1].IsError || trace.Events[2].IsError {
+		t.Fatalf("event errors = %#v", trace.Events)
+	}
+	got := trace.HealthEvidence.Verification
+	want := model.VerificationEvidence{RecognizedCount: 3, KnownResultCount: 2, UnknownResultCount: 1}
+	if got != want {
+		t.Fatalf("verification evidence = %#v, want %#v", got, want)
 	}
 }
 

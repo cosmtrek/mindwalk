@@ -406,30 +406,35 @@ func TestParseCodexJSRepl(t *testing.T) {
 	}
 }
 
-func TestCommandOutputFailedVariants(t *testing.T) {
+func TestCommandOutputStatus(t *testing.T) {
 	tests := []struct {
-		output string
-		want   bool
+		output     string
+		wantFailed bool
+		wantKnown  bool
 	}{
-		{output: "Process exited with code 1", want: true},
-		{output: "Exit code: 2", want: true},
-		{output: `{"output":"ok","metadata":{"exit_code":0}}`, want: false},
-		{output: `{"output":"failed","metadata":{"exit_code":1}}`, want: true},
-		{output: `{"output":"failed","exit_code":3}`, want: true},
-		{output: `{"output":"Exit code: 1","metadata":{"exit_code":0}}`, want: false},
-		{output: "Script completed\nWall time 0.1 seconds\nOutput:\nExit code: 1", want: false},
-		{output: "Script running with cell ID 28\nExit code: 1", want: false},
-		{output: "Script failed\nExit code: 0", want: true},
-		{output: "plain output", want: false},
-		{output: `{"message":"Wait timed out after 20000ms","timed_out":true}`, want: true},
-		{output: `{"message":"still running","timed_out":false}`, want: false},
-		{output: "apply_patch verification failed: Failed to find expected lines in a.go", want: true},
-		{output: "Wall time: 8.9 seconds\naborted by user", want: true},
-		{output: "Wall time: 8.9 seconds\nOutput:\naborted by user", want: false},
+		{output: "Process exited with code 1", wantFailed: true, wantKnown: true},
+		{output: "Exit code: 2", wantFailed: true, wantKnown: true},
+		{output: `{"output":"ok","metadata":{"exit_code":0}}`, wantKnown: true},
+		{output: `{"output":"failed","metadata":{"exit_code":1}}`, wantFailed: true, wantKnown: true},
+		{output: `{"output":"failed","exit_code":3}`, wantFailed: true, wantKnown: true},
+		{output: `{"output":"Exit code: 1","metadata":{"exit_code":0}}`, wantKnown: true},
+		{output: "Script completed\nWall time 0.1 seconds\nOutput:\nExit code: 1", wantKnown: true},
+		{output: "Script running with cell ID 28\nExit code: 1", wantKnown: false},
+		{output: "Script failed\nExit code: 0", wantFailed: true, wantKnown: true},
+		{output: "plain output", wantKnown: false},
+		{output: `{"message":"Wait timed out after 20000ms","timed_out":true}`, wantFailed: true, wantKnown: true},
+		{output: `{"message":"still running","timed_out":false}`, wantKnown: true},
+		{output: "apply_patch verification failed: Failed to find expected lines in a.go", wantFailed: true, wantKnown: true},
+		{output: "Wall time: 8.9 seconds\naborted by user", wantFailed: true, wantKnown: true},
+		{output: "Wall time: 8.9 seconds\nOutput:\naborted by user", wantKnown: false},
 	}
 	for _, tt := range tests {
-		if got := commandOutputFailed(tt.output); got != tt.want {
-			t.Errorf("commandOutputFailed(%q) = %v, want %v", tt.output, got, tt.want)
+		failed, known := commandOutputStatus(tt.output)
+		if failed != tt.wantFailed || known != tt.wantKnown {
+			t.Errorf("commandOutputStatus(%q) = (%v, %v), want (%v, %v)", tt.output, failed, known, tt.wantFailed, tt.wantKnown)
+		}
+		if got := commandOutputFailed(tt.output); got != tt.wantFailed {
+			t.Errorf("commandOutputFailed(%q) = %v, want %v", tt.output, got, tt.wantFailed)
 		}
 	}
 }
