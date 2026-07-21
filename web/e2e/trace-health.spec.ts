@@ -44,6 +44,13 @@ interface AppHandlers {
   health?: (key: string, requestCount: number, route: Route) => Promise<void>;
 }
 
+type RecordedRequest = { method: string; pathname: string };
+
+interface MockRequestRecorder {
+  log: RecordedRequest[];
+  unmatched: RecordedRequest[];
+}
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((release) => {
@@ -56,14 +63,19 @@ async function mockApp(
   page: Page,
   handlers: AppHandlers = {},
   sessions = [fixtures.session]
-): Promise<Map<string, number>> {
-  const requests = new Map<string, number>();
+): Promise<MockRequestRecorder> {
+  const counts = new Map<string, number>();
+  const recorder: MockRequestRecorder = { log: [], unmatched: [] };
+
+  page.on("request", (request) => {
+    recorder.log.push({ method: request.method(), pathname: new URL(request.url()).pathname });
+  });
 
   await page.route("**/api/sessions**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
-    const requestCount = (requests.get(path) ?? 0) + 1;
-    requests.set(path, requestCount);
+    const requestCount = (counts.get(path) ?? 0) + 1;
+    counts.set(path, requestCount);
 
     if (path === "/api/sessions") {
       if (handlers.sessions) {
@@ -76,6 +88,7 @@ async function mockApp(
 
     const match = path.match(/^\/api\/sessions\/([^/]+)\/(snapshot|agents|health|report)$/);
     if (!match) {
+      recorder.unmatched.push({ method: route.request().method(), pathname: path });
       await route.fulfill({ status: 404, body: "fictional route not found" });
       return;
     }
@@ -105,7 +118,7 @@ async function mockApp(
     }
   });
 
-  return requests;
+  return recorder;
 }
 
 function snapshotFor(key: string) {
@@ -260,23 +273,17 @@ test("retries a failed signal through a health-only control", async ({ page }) =
   await expect(failed.locator(".health-row-state")).toHaveText("Failed");
   const retry = failed.getByRole("button", { name: "Retry trace health" });
   await expect(retry).toBeVisible();
-  const before = new Map(requests);
+  const before = requests.log.length;
 
   await retry.click();
   await expect(healthRow(panel, "Subagents").locator(".health-row-state")).toHaveText("Recorded directly");
   await expect(page.locator(".city-scene canvas")).toBeVisible();
   await expect(page.locator(".deck-pos-count")).toHaveText("4 / 4");
-  expect(requests.get("/api/sessions/synthetic-root/health")).toBe(2);
-  expect(requests.get("/api/sessions")).toBe(before.get("/api/sessions"));
-  expect(requests.get("/api/sessions/synthetic-root/snapshot")).toBe(
-    before.get("/api/sessions/synthetic-root/snapshot")
-  );
-  expect(requests.get("/api/sessions/synthetic-root/agents")).toBe(
-    before.get("/api/sessions/synthetic-root/agents")
-  );
-  expect(requests.get("/api/sessions/synthetic-root/report")).toBe(
-    before.get("/api/sessions/synthetic-root/report")
-  );
+  expect(requests.log.slice(before)).toEqual([{
+    method: "GET",
+    pathname: `/api/sessions/${encodeURIComponent(fixtures.session.key)}/health`
+  }]);
+  expect(requests.unmatched).toEqual([]);
 });
 
 test("explains missing and unavailable traces in estimated subagent copy", async ({ page }) => {
@@ -400,21 +407,15 @@ test("keeps health failure local and retries only the health request", async ({ 
   const panel = await openHealth(page);
   await expect(panel.getByRole("alert")).toContainText("health temporarily unavailable");
   await expect(page.locator(".toast.error")).toHaveCount(0);
-  const before = new Map(requests);
+  const before = requests.log.length;
 
   await panel.getByRole("button", { name: "Retry trace health" }).click();
   await expect(panel.locator(".health-row")).toHaveCount(4);
-  expect(requests.get("/api/sessions/synthetic-root/health")).toBe(2);
-  expect(requests.get("/api/sessions")).toBe(before.get("/api/sessions"));
-  expect(requests.get("/api/sessions/synthetic-root/snapshot")).toBe(
-    before.get("/api/sessions/synthetic-root/snapshot")
-  );
-  expect(requests.get("/api/sessions/synthetic-root/agents")).toBe(
-    before.get("/api/sessions/synthetic-root/agents")
-  );
-  expect(requests.get("/api/sessions/synthetic-root/report")).toBe(
-    before.get("/api/sessions/synthetic-root/report")
-  );
+  expect(requests.log.slice(before)).toEqual([{
+    method: "GET",
+    pathname: `/api/sessions/${encodeURIComponent(fixtures.session.key)}/health`
+  }]);
+  expect(requests.unmatched).toEqual([]);
 });
 
 test("loads refreshed health only after a successful fresh scan and snapshot", async ({ page }) => {

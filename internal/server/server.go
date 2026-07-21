@@ -246,6 +246,11 @@ func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, city)
 	case "health":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		summary, err := s.sessionHealth(selector)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)

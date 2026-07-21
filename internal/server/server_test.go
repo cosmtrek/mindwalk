@@ -763,6 +763,18 @@ func TestSessionHealthReturnsNotFoundForUnknownSession(t *testing.T) {
 	}
 }
 
+func TestSessionHealthRejectsNonGet(t *testing.T) {
+	s, _ := newAgentAPIServer(t)
+
+	resp := requestSessionResource(t, s, http.MethodPost, "/api/sessions/root-a/health")
+	if resp.Code != http.StatusMethodNotAllowed || strings.TrimSpace(resp.Body.String()) != "method not allowed" {
+		t.Fatalf("health status=%d body=%q, want 405", resp.Code, resp.Body.String())
+	}
+	if allow := resp.Header().Get("Allow"); allow != http.MethodGet {
+		t.Fatalf("Allow = %q, want %q", allow, http.MethodGet)
+	}
+}
+
 func TestSessionHealthIsolatesAgentGraphFailure(t *testing.T) {
 	s, source := newAgentAPIServer(t)
 	root := requestSessions(t, s, "/api/sessions")[0]
