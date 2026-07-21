@@ -196,6 +196,51 @@ export interface Observability {
 
 export type MetricObservability = "exact" | "estimated" | "unavailable";
 
+export type HealthAvailability = "ready" | "not-applicable" | "failed";
+export type HealthQuality = "exact" | "estimated" | "unavailable";
+
+export interface HealthSignalBase {
+  availability: HealthAvailability;
+  quality?: HealthQuality;
+  reason: string;
+  affects: string[];
+}
+
+export interface ReadHealth extends HealthSignalBase {
+  directCount: number;
+  inferredCount: number;
+}
+
+export interface ErrorHealth extends HealthSignalBase {
+  recognizedCount: number;
+}
+
+export interface VerificationHealth extends HealthSignalBase {
+  recognizedCount: number;
+  knownResultCount: number;
+  unknownResultCount: number;
+  editsAfterLastVerify: number;
+}
+
+export interface SubagentHealth extends HealthSignalBase {
+  exactCount: number;
+  derivedCount: number;
+  missingTraceCount: number;
+  unavailableTraceCount: number;
+}
+
+export interface SessionHealth {
+  version: 1;
+  sessionKey: string;
+  badge?: "estimated" | "limited";
+  signals: {
+    reads: ReadHealth;
+    errors: ErrorHealth;
+    verification: VerificationHealth;
+    subagents: SubagentHealth;
+  };
+}
+
 /** LLM-assisted evaluation of one session; verdicts are server-derived
  * from finding severities, never decided by the judge itself */
 export interface Report {

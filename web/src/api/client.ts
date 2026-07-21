@@ -1,4 +1,12 @@
-import type { AgentGraph, CityMap, JudgeChoice, ReportStatus, SessionMeta, Trace } from "../types";
+import type {
+  AgentGraph,
+  CityMap,
+  JudgeChoice,
+  ReportStatus,
+  SessionHealth,
+  SessionMeta,
+  Trace
+} from "../types";
 
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -37,6 +45,10 @@ export function getSessionSnapshot(key: string): Promise<{ trace: Trace; city: C
 
 export function getSessionAgents(rootKey: string): Promise<AgentGraph> {
   return getJSON<AgentGraph>(`/api/sessions/${encodeURIComponent(rootKey)}/agents`);
+}
+
+export function getSessionHealth(key: string): Promise<SessionHealth> {
+  return getJSON<SessionHealth>(`/api/sessions/${encodeURIComponent(key)}/health`);
 }
 
 export function getAgentTrace(rootKey: string, agentID: string): Promise<Trace> {

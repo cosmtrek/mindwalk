@@ -1801,6 +1801,10 @@ dd {
   transform: translateY(-50%);
 }
 
+.dock-strip button.active::after {
+  display: none;
+}
+
 .dock-dot {
   position: absolute;
   top: 4px;
@@ -1827,6 +1831,17 @@ dd {
   background: var(--alarm);
 }
 
+.dock-dot-estimated {
+  background: var(--moon);
+  opacity: 0.65;
+}
+
+.dock-dot-limited {
+  border: 1px solid var(--moon);
+  background: transparent;
+  opacity: 0.72;
+}
+
 @keyframes report-pulse {
   0%,
   100% {
@@ -1842,6 +1857,196 @@ dd {
   color: var(--muted);
   font-size: var(--text-sm);
   line-height: 1.55;
+}
+
+/* trace health is a compact evidence disclosure, not a scorecard: certainty
+   lives in one quiet vertical stack and the raw reasons stay folded away */
+.health-panel {
+  width: min(294px, calc(100vw - 104px));
+  min-width: 0;
+}
+
+.health-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px 9px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.health-head-note {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.health-list {
+  display: grid;
+}
+
+.health-refreshing {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.health-row {
+  min-width: 0;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.health-row:last-child {
+  border-bottom: 0;
+}
+
+.health-row-toggle {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto 13px;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  text-align: left;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.health-row-toggle:hover {
+  color: var(--ink);
+  background: var(--panel);
+}
+
+.health-row-title {
+  min-width: 0;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 560;
+}
+
+.health-row-state {
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.health-signal {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.health-signal-unavailable {
+  border: 1px solid var(--moon);
+  background: transparent;
+  opacity: 0.72;
+}
+
+.health-signal-estimated {
+  background: var(--moon);
+  opacity: 0.65;
+}
+
+.health-signal-exact {
+  background: var(--pine);
+  opacity: 0.72;
+}
+
+.health-signal-not-applicable {
+  background: var(--hairline-strong);
+}
+
+.health-row-chevron {
+  color: var(--faint);
+  transition: transform 0.16s ease;
+}
+
+.health-row-toggle[aria-expanded="true"] .health-row-chevron {
+  transform: rotate(180deg);
+}
+
+.health-explanation {
+  padding: 1px 28px 7px 23px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.health-technical {
+  margin: 0 8px 5px 23px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.health-technical summary {
+  width: max-content;
+  max-width: 100%;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.health-technical dl {
+  display: grid;
+  gap: 4px;
+  margin: 5px 0 7px;
+  padding-left: 9px;
+  border-left: 1px solid var(--hairline);
+}
+
+.health-technical dl > div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.health-technical dt {
+  color: var(--faint);
+}
+
+.health-technical dd {
+  min-width: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.health-technical code {
+  color: var(--muted);
+  font-size: inherit;
+}
+
+.health-state {
+  display: grid;
+  gap: 8px;
+  padding: 12px 10px 9px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.health-error {
+  border-left: 1px solid var(--hairline-strong);
+}
+
+.health-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  padding: 5px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  color: var(--ink);
+}
+
+.health-retry:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.health-retry:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 /* agent lens picker: actor identity is typographic; color is reserved for

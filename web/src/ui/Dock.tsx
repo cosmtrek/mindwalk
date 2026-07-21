@@ -3,7 +3,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 
 export type PanelPresentation = "sheet" | "pop";
 export type PanelSection = "scene" | "session";
-export type PanelBadge = "running" | "done" | "stale" | "failed";
+export type PanelBadge = "running" | "done" | "stale" | "failed" | "estimated" | "limited";
 
 /**
  * One dock panel, declared as data. Extending the dock — a layers toggle, a
@@ -91,7 +91,7 @@ export function Dock({ panels, openSheet, openPop, onToggle, onClosePop }: DockP
                     aria-label={panel.hint}
                   >
                     <Icon size={15} />
-                    {panel.badge ? <span className={`dock-dot dock-dot-${panel.badge}`} /> : null}
+                    {panel.badge ? <span className={`dock-dot dock-dot-${panel.badge}`} aria-hidden /> : null}
                   </button>
                 );
               })}

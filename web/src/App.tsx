@@ -5,15 +5,17 @@ import {
   getAgentTrace,
   getRepoMap,
   getSessionAgents,
+  getSessionHealth,
   getSessionReport,
   getSessionSnapshot,
   listSessions,
   startSessionAnalyze
 } from "./api/client";
-import { Crosshair, Sparkles, Mountain, TreePine, Users } from "lucide-react";
-import type { AgentGraph, CityMap, JudgeChoice, ReportStatus, Trace } from "./types";
+import { Crosshair, Sparkles, Mountain, ShieldCheck, TreePine, Users } from "lucide-react";
+import type { AgentGraph, CityMap, JudgeChoice, ReportStatus, SessionHealth, Trace } from "./types";
 import { Dock, type PanelDescriptor } from "./ui/Dock";
 import { AgentsPanel } from "./ui/AgentsPanel";
+import { HealthPanel } from "./ui/HealthPanel";
 import { ReportPanel } from "./ui/ReportPanel";
 import { ViewPanel } from "./ui/ViewPanel";
 import { PlaybackEngine } from "./playback/reducer";
@@ -42,6 +44,14 @@ function evaluateHint(badge: "running" | "done" | "stale" | "failed" | null): st
     default:
       return "Evaluate this session with your local agent CLI";
   }
+}
+
+function healthHint(health: SessionHealth | undefined, loading: boolean, error: string | undefined): string {
+  if (loading) return "Checking trace health";
+  if (error) return "Trace health unavailable — open to retry";
+  if (health?.badge === "limited") return "Trace health: some evidence is unavailable";
+  if (health?.badge === "estimated") return "Trace health: some evidence is estimated";
+  return "Trace health: evidence recorded directly where applicable";
 }
 
 const MAIN_ACTOR_KEY = "__main__";
@@ -80,6 +90,7 @@ export default function App() {
   const lensGeneration = useRef(0);
   const agentGraphRequest = useRef(0);
   const agentTraceRequest = useRef(0);
+  const healthRequest = useRef(0);
   const manualRefreshInFlight = useRef(false);
   const pendingLoads = useRef(0);
   const activeSessionKeyRef = useRef(activeSessionKey);
@@ -95,6 +106,9 @@ export default function App() {
   const [loadingAgentID, setLoadingAgentID] = useState<string | undefined>();
   const [agentPanelError, setAgentPanelError] = useState<string | undefined>();
   const [agentRetryID, setAgentRetryID] = useState<string | null | undefined>();
+  const [sessionHealth, setSessionHealth] = useState<SessionHealth>();
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthError, setHealthError] = useState<string>();
   const activeAgentIDRef = useRef<string | null>(null);
   const pendingAgentIDRef = useRef<string | undefined>(undefined);
   const rootTraceRef = useRef<Trace | undefined>(undefined);
@@ -119,6 +133,33 @@ export default function App() {
     pendingLoads.current = Math.max(0, pendingLoads.current - 1);
     if (pendingLoads.current === 0) setLoading(false);
   }, [setLoading]);
+
+  const resetHealth = useCallback(() => {
+    healthRequest.current++;
+    setSessionHealth(undefined);
+    setHealthLoading(false);
+    setHealthError(undefined);
+  }, []);
+
+  const loadHealth = useCallback(async (key: string) => {
+    const request = ++healthRequest.current;
+    setSessionHealth(undefined);
+    setHealthLoading(true);
+    setHealthError(undefined);
+    try {
+      const health = await getSessionHealth(key);
+      if (request !== healthRequest.current || activeSessionKeyRef.current !== key) return;
+      setSessionHealth(health);
+    } catch (err) {
+      if (request === healthRequest.current && activeSessionKeyRef.current === key) {
+        setHealthError(describeError(err, "loading trace health"));
+      }
+    } finally {
+      if (request === healthRequest.current && activeSessionKeyRef.current === key) {
+        setHealthLoading(false);
+      }
+    }
+  }, []);
 
   const resetLens = useCallback(() => {
     const generation = ++lensGeneration.current;
@@ -278,23 +319,29 @@ export default function App() {
       const next = preferred ?? (stillListed ? currentActiveKey : fallback);
       if (next !== currentActiveKey) {
         const lens = resetLens();
+        resetHealth();
         activeSessionKeyRef.current = next;
         if (!next) loadGeneration.current++;
         setActiveSession(next);
-        if (next) void loadAgentGraph(next, lens);
+        if (next) {
+          void loadAgentGraph(next, lens);
+          void loadHealth(next);
+        }
       } else if (fresh && next) {
         invalidateActorTracesForRescan();
         void loadAgentGraph(next);
       }
       if (next) await loadSession(next);
+      return true;
     } catch (err) {
       if (generation === scanGeneration.current) {
         setError(describeError(err, "scanning sessions"));
       }
+      return false;
     } finally {
       endLoading();
     }
-  }, [beginLoading, endLoading, harnessFilter, hideEmpty, invalidateActorTracesForRescan, loadAgentGraph, loadSession, resetLens, setActiveSession, setError, setSessions]);
+  }, [beginLoading, endLoading, harnessFilter, hideEmpty, invalidateActorTracesForRescan, loadAgentGraph, loadHealth, loadSession, resetHealth, resetLens, setActiveSession, setError, setSessions]);
 
   const loadRepoMap = useCallback(async (repo?: string) => {
     beginLoading();
@@ -318,11 +365,13 @@ export default function App() {
   const selectSession = useCallback((key: string) => {
     if (activeSessionKeyRef.current === key) return;
     const lens = resetLens();
+    resetHealth();
     activeSessionKeyRef.current = key;
     setActiveSession(key);
     void loadAgentGraph(key, lens);
+    void loadHealth(key);
     void loadSession(key);
-  }, [loadAgentGraph, loadSession, resetLens, setActiveSession]);
+  }, [loadAgentGraph, loadHealth, loadSession, resetHealth, resetLens, setActiveSession]);
 
   const saveActivePlayhead = useCallback(() => {
     const key = activeAgentIDRef.current ?? MAIN_ACTOR_KEY;
@@ -412,6 +461,12 @@ export default function App() {
     else void selectAgent(agentRetryID);
   }, [agentRetryID, loadAgentGraph, selectAgent]);
 
+  const retryHealth = useCallback(() => {
+    const key = activeSessionKeyRef.current;
+    if (!key || mapOnly) return;
+    void loadHealth(key);
+  }, [loadHealth, mapOnly]);
+
   const exportVideo = useCallback(async () => {
     const canvas = canvasRef.current;
     const total = trace?.events.length ?? 0;
@@ -495,10 +550,16 @@ export default function App() {
     manualRefreshInFlight.current = true;
     const key = activeSessionKeyRef.current;
     if (key && !mapOnly) void refreshReport(key);
-    void scan(true).finally(() => {
-      manualRefreshInFlight.current = false;
-    });
-  }, [scan, refreshReport, mapOnly]);
+    void scan(true)
+      .then((scanned) => {
+        if (scanned && key && activeSessionKeyRef.current === key && !mapOnly) {
+          return loadHealth(key);
+        }
+      })
+      .finally(() => {
+        manualRefreshInFlight.current = false;
+      });
+  }, [loadHealth, scan, refreshReport, mapOnly]);
 
   useEffect(() => {
     if (reportStatus?.state !== "running" || !activeSessionKey) return;
@@ -812,6 +873,27 @@ export default function App() {
                             onSelect={(agentID) => void selectAgent(agentID)}
                             onRetry={retryAgents}
                             onClose={closeSheet}
+                          />
+                        )
+                      } satisfies PanelDescriptor
+                    ]
+                  : []),
+                ...(!mapOnly && trace
+                  ? [
+                      {
+                        id: "health",
+                        icon: ShieldCheck,
+                        hint: healthHint(sessionHealth, healthLoading, healthError),
+                        section: "session",
+                        presentation: "pop",
+                        badge: sessionHealth?.badge ?? null,
+                        render: () => (
+                          <HealthPanel
+                            health={sessionHealth}
+                            loading={healthLoading}
+                            error={healthError}
+                            onRetry={retryHealth}
+                            onClose={closePop}
                           />
                         )
                       } satisfies PanelDescriptor
