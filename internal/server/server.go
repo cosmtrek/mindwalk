@@ -26,6 +26,7 @@ import (
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
+	"github.com/cosmtrek/mindwalk/internal/health"
 	"github.com/cosmtrek/mindwalk/internal/judge"
 	"github.com/cosmtrek/mindwalk/internal/model"
 )
@@ -244,6 +245,13 @@ func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, city)
+	case "health":
+		summary, err := s.sessionHealth(selector)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, summary)
 	case "report":
 		s.handleSessionReport(w, r, selector)
 	case "analyze":
@@ -627,6 +635,24 @@ func (s *Server) traceAndMap(selector string) (*model.Trace, *model.CityMap, err
 		return nil, nil, err
 	}
 	return s.traceAndMapMeta(meta)
+}
+
+func (s *Server) sessionHealth(selector string) (*model.SessionHealth, error) {
+	root, err := s.findSession(selector)
+	if err != nil {
+		return nil, err
+	}
+	trace, _, err := s.traceAndMapMeta(root)
+	if err != nil {
+		return nil, err
+	}
+	graph, graphErr := s.agentGraph(root)
+	key := root.Key
+	if key == "" {
+		key = adapter.SessionKey(root.Harness, root.Path)
+	}
+	summary := health.Build(key, trace, graph, graphErr)
+	return &summary, nil
 }
 
 func (s *Server) traceAndMapMeta(meta model.SessionMeta) (*model.Trace, *model.CityMap, error) {

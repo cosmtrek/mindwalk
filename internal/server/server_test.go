@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -727,6 +728,114 @@ func TestAuxiliarySessionCannotBeAgentRoot(t *testing.T) {
 	}
 }
 
+func TestSessionHealthServesMixedSignals(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+	root := requestSessions(t, s, "/api/sessions")[0]
+	trace := source.traces[filepath.Clean(root.Path)]
+	trace.Marks = []model.Mark{{Type: "subagent"}}
+	trace.Stats = model.ComputeStats(trace, 1, model.ObservabilityExact)
+
+	resp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/health")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("health status = %d body=%q", resp.Code, resp.Body.String())
+	}
+	var summary model.SessionHealth
+	if err := json.Unmarshal(resp.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.SessionKey != "root-a" || summary.Signals.Reads.DirectCount != 1 || summary.Signals.Reads.Quality != model.ObservabilityExact {
+		t.Fatalf("read health = %#v", summary.Signals.Reads)
+	}
+	if summary.Signals.Errors.Availability != model.HealthReady || summary.Signals.Verification.Availability != model.HealthReady {
+		t.Fatalf("non-subagent signals = %#v", summary.Signals)
+	}
+	if summary.Signals.Subagents.Availability != model.HealthReady || summary.Signals.Subagents.Quality != model.ObservabilityEstimated || summary.Signals.Subagents.Reason != model.HealthReasonMixedAgentLinks || summary.Signals.Subagents.MissingTraceCount != 1 || summary.Signals.Subagents.UnavailableTraceCount != 1 {
+		t.Fatalf("subagent health = %#v", summary.Signals.Subagents)
+	}
+}
+
+func TestSessionHealthReturnsNotFoundForUnknownSession(t *testing.T) {
+	s, _ := newAgentAPIServer(t)
+
+	resp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/missing/health")
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("health status = %d body=%q, want 404", resp.Code, resp.Body.String())
+	}
+}
+
+func TestSessionHealthIsolatesAgentGraphFailure(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+	root := requestSessions(t, s, "/api/sessions")[0]
+	trace := source.traces[filepath.Clean(root.Path)]
+	trace.Marks = []model.Mark{{Type: "subagent"}}
+	trace.Stats = model.ComputeStats(trace, 1, model.ObservabilityExact)
+	source.graphErr = errors.New("graph unavailable")
+
+	resp := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/health")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("health status = %d body=%q", resp.Code, resp.Body.String())
+	}
+	var summary model.SessionHealth
+	if err := json.Unmarshal(resp.Body.Bytes(), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Signals.Subagents.Availability != model.HealthFailed || summary.Signals.Subagents.Reason != model.HealthReasonAgentGraphFailed {
+		t.Fatalf("subagent health = %#v", summary.Signals.Subagents)
+	}
+	for name, signal := range map[string]model.HealthSignal{
+		"reads":        summary.Signals.Reads.HealthSignal,
+		"errors":       summary.Signals.Errors.HealthSignal,
+		"verification": summary.Signals.Verification.HealthSignal,
+	} {
+		if signal.Availability != model.HealthReady {
+			t.Fatalf("%s availability = %q, want ready", name, signal.Availability)
+		}
+	}
+}
+
+func TestSessionHealthRefreshesAfterFreshScanWithoutWritingReport(t *testing.T) {
+	s, source := newAgentAPIServer(t)
+	s.reportCache.Dir = filepath.Join(t.TempDir(), "reports")
+	root := requestSessions(t, s, "/api/sessions")[0]
+	trace := source.traces[filepath.Clean(root.Path)]
+
+	first := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/health")
+	if first.Code != http.StatusOK {
+		t.Fatalf("initial health status = %d body=%q", first.Code, first.Body.String())
+	}
+	var initial model.SessionHealth
+	if err := json.Unmarshal(first.Body.Bytes(), &initial); err != nil {
+		t.Fatal(err)
+	}
+	if initial.Signals.Reads.DirectCount != 1 {
+		t.Fatalf("initial direct reads = %d, want 1", initial.Signals.Reads.DirectCount)
+	}
+
+	trace.Events = append(trace.Events, model.Event{Seq: 1, Tool: "Read", Action: "read", Targets: []model.Target{{Path: "b.go", Touch: "read"}}})
+	trace.Stats = model.ComputeStats(trace, 2, model.ObservabilityExact)
+	appendServerSession(t, root.Path, "refreshed")
+	requestSessions(t, s, "/api/sessions?fresh=1")
+
+	second := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/health")
+	if second.Code != http.StatusOK {
+		t.Fatalf("refreshed health status = %d body=%q", second.Code, second.Body.String())
+	}
+	var refreshed model.SessionHealth
+	if err := json.Unmarshal(second.Body.Bytes(), &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Signals.Reads.DirectCount != 2 {
+		t.Fatalf("refreshed direct reads = %d, want 2", refreshed.Signals.Reads.DirectCount)
+	}
+	if _, ok := s.analyze.snapshot(root.Key); ok {
+		t.Fatal("health request started an analyze job")
+	}
+	entries, err := os.ReadDir(s.reportCache.Dir)
+	if !errors.Is(err, os.ErrNotExist) || len(entries) != 0 {
+		t.Fatalf("health request wrote reports: entries=%#v err=%v", entries, err)
+	}
+}
+
 func TestChildAgentTraceReusesRootCityMap(t *testing.T) {
 	s, _ := newAgentAPIServer(t)
 	requestSessions(t, s, "/api/sessions")
@@ -1103,6 +1212,7 @@ type agentAPISource struct {
 	metas        map[string]model.SessionMeta
 	traces       map[string]*model.Trace
 	graphs       map[string]*model.AgentGraph
+	graphErr     error
 	parses       map[string]int
 	graphBuilds  atomic.Int32
 	graphStarted chan struct{}
@@ -1140,6 +1250,9 @@ func (s *agentAPISource) Parse(path string) (*model.Trace, error) {
 }
 
 func (s *agentAPISource) BuildAgentGraph(root model.SessionMeta, _ []model.SessionMeta) (*model.AgentGraph, error) {
+	if s.graphErr != nil {
+		return nil, s.graphErr
+	}
 	build := s.graphBuilds.Add(1)
 	if build == 1 && s.graphStarted != nil {
 		close(s.graphStarted)
