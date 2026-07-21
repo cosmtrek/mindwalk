@@ -49,7 +49,7 @@ function evaluateHint(badge: "running" | "done" | "stale" | "failed" | null): st
 function healthHint(health: SessionHealth | undefined, loading: boolean, error: string | undefined): string {
   if (loading) return "Checking trace health";
   if (error) return "Trace health unavailable — open to retry";
-  if (health?.badge === "limited") return "Trace health: some evidence is unavailable";
+  if (health?.badge === "limited") return "Trace health: some evidence is limited";
   if (health?.badge === "estimated") return "Trace health: some evidence is estimated";
   return "Trace health: evidence recorded directly where applicable";
 }
@@ -887,13 +887,13 @@ export default function App() {
                         section: "session",
                         presentation: "pop",
                         badge: sessionHealth?.badge ?? null,
-                        render: () => (
+                        render: (requestClosePop) => (
                           <HealthPanel
                             health={sessionHealth}
                             loading={healthLoading}
                             error={healthError}
                             onRetry={retryHealth}
-                            onClose={closePop}
+                            onClose={requestClosePop ?? closePop}
                           />
                         )
                       } satisfies PanelDescriptor

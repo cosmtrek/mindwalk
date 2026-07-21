@@ -26,6 +26,7 @@ type HealthRow = {
 };
 
 const PRIORITY = {
+  failed: 0,
   unavailable: 0,
   estimated: 1,
   exact: 2,
@@ -168,7 +169,8 @@ function healthRows(health: SessionHealth): HealthRow[] {
 }
 
 function healthState(signal: HealthSignalBase): keyof typeof PRIORITY {
-  if (signal.availability === "failed" || signal.quality === "unavailable") return "unavailable";
+  if (signal.availability === "failed") return "failed";
+  if (signal.quality === "unavailable") return "unavailable";
   if (signal.availability === "not-applicable") return "not-applicable";
   if (signal.quality === "estimated") return "estimated";
   if (signal.quality === "exact") return "exact";
@@ -181,8 +183,10 @@ function healthPriority(signal: HealthSignalBase): number {
 
 function stateLabel(state: keyof typeof PRIORITY): string {
   switch (state) {
+    case "failed":
+      return "Failed";
     case "unavailable":
-      return "Limited";
+      return "Unavailable";
     case "estimated":
       return "Estimated";
     case "exact":

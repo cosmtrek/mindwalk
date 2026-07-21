@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 
 export type PanelPresentation = "sheet" | "pop";
 export type PanelSection = "scene" | "session";
@@ -20,7 +20,7 @@ export interface PanelDescriptor {
    * to the strip, coexists with an open sheet */
   presentation: PanelPresentation;
   badge?: PanelBadge | null;
-  render: () => ReactNode;
+  render: (requestClosePop?: () => void) => ReactNode;
 }
 
 interface DockProps {
@@ -34,12 +34,20 @@ interface DockProps {
 export function Dock({ panels, openSheet, openPop, onToggle, onClosePop }: DockProps) {
   const popRef = useRef<HTMLDivElement | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
+  const triggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const sheet = panels.find((panel) => panel.id === openSheet && panel.presentation === "sheet");
   const pop = panels.find((panel) => panel.id === openPop && panel.presentation === "pop");
+  const popID = pop?.id;
   const sections: PanelSection[] = ["scene", "session"];
   const grouped = sections
     .map((section) => ({ section, items: panels.filter((panel) => panel.section === section) }))
     .filter((group) => group.items.length > 0);
+
+  const closePopAndRestoreFocus = useCallback(() => {
+    const trigger = popID ? triggerRefs.current.get(popID) : undefined;
+    onClosePop();
+    if (trigger) requestAnimationFrame(() => trigger.focus());
+  }, [onClosePop, popID]);
 
   // pops are transient: click-away or Escape dismisses, like any menu; the
   // strip is exempt so the toggle button doesn't dismiss-then-reopen
@@ -51,7 +59,10 @@ export function Dock({ panels, openSheet, openPop, onToggle, onClosePop }: DockP
       onClosePop();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClosePop();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePopAndRestoreFocus();
+      }
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -59,15 +70,15 @@ export function Dock({ panels, openSheet, openPop, onToggle, onClosePop }: DockP
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [pop, onClosePop]);
+  }, [pop, onClosePop, closePopAndRestoreFocus]);
 
   return (
     <div className="dock">
       {/* anchored left of the whole dock: beside the sheet when one is open,
           beside the strip otherwise — never covering either */}
       {pop ? (
-        <div className="dock-pop" ref={popRef}>
-          {pop.render()}
+        <div className={`dock-pop dock-pop-${pop.id}`} id={`dock-pop-${pop.id}`} ref={popRef}>
+          {pop.render(closePopAndRestoreFocus)}
         </div>
       ) : null}
       {sheet ? <aside className="dock-panel">{sheet.render()}</aside> : null}
@@ -84,7 +95,13 @@ export function Dock({ panels, openSheet, openPop, onToggle, onClosePop }: DockP
                 return (
                   <button
                     key={panel.id}
+                    ref={(node) => {
+                      if (node) triggerRefs.current.set(panel.id, node);
+                      else triggerRefs.current.delete(panel.id);
+                    }}
                     aria-pressed={active}
+                    aria-expanded={panel.presentation === "pop" ? panel.id === openPop : undefined}
+                    aria-controls={panel.presentation === "pop" ? `dock-pop-${panel.id}` : undefined}
                     className={active ? "active" : ""}
                     onClick={() => onToggle(panel)}
                     data-hint={panel.hint}

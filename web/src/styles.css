@@ -1866,6 +1866,20 @@ dd {
   min-width: 0;
 }
 
+@media (max-width: 520px) {
+  .dock-pop-health {
+    position: fixed;
+    inset: 12px 12px auto;
+    min-width: 0;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+
+  .health-panel {
+    width: 100%;
+  }
+}
+
 .health-head {
   display: flex;
   align-items: flex-start;
@@ -1940,6 +1954,12 @@ dd {
 
 .health-signal-unavailable {
   border: 1px solid var(--moon);
+  background: transparent;
+  opacity: 0.72;
+}
+
+.health-signal-failed {
+  border: 1px solid var(--amber);
   background: transparent;
   opacity: 0.72;
 }
