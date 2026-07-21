@@ -47,11 +47,12 @@ type LayoutMeta struct {
 }
 
 type Trace struct {
-	Version int          `json:"version"`
-	Session TraceSession `json:"session"`
-	Events  []Event      `json:"events"`
-	Marks   []Mark       `json:"marks"`
-	Stats   Stats        `json:"stats"`
+	Version        int                 `json:"version"`
+	Session        TraceSession        `json:"session"`
+	Events         []Event             `json:"events"`
+	Marks          []Mark              `json:"marks"`
+	Stats          Stats               `json:"stats"`
+	HealthEvidence TraceHealthEvidence `json:"-"`
 }
 
 type TraceSession struct {

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindwalk.local/schema/session-health.schema.json",
+  "title": "mindwalk session health",
+  "type": "object",
+  "required": ["version", "sessionKey", "signals"],
+  "properties": {
+    "version": { "const": 1 },
+    "sessionKey": { "type": "string", "minLength": 1 },
+    "badge": { "enum": ["estimated", "limited"] },
+    "signals": { "$ref": "#/$defs/signals" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "affects": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "signalState": {
+      "allOf": [
+        {
+          "if": { "properties": { "availability": { "const": "ready" } }, "required": ["availability"] },
+          "then": { "required": ["quality"], "properties": { "quality": { "enum": ["exact", "estimated", "unavailable"] } } },
+          "else": {
+            "properties": { "availability": { "enum": ["not-applicable", "failed"] } },
+            "not": { "required": ["quality"] }
+          }
+        }
+      ]
+    },
+    "reads": {
+      "type": "object",
+      "required": ["availability", "reason", "affects", "directCount", "inferredCount"],
+      "properties": {
+        "availability": { "enum": ["ready", "not-applicable", "failed"] },
+        "quality": { "enum": ["exact", "estimated", "unavailable"] },
+        "reason": { "type": "string" },
+        "affects": { "$ref": "#/$defs/affects" },
+        "directCount": { "type": "integer", "minimum": 0 },
+        "inferredCount": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/signalState" }]
+    },
+    "errors": {
+      "type": "object",
+      "required": ["availability", "reason", "affects", "recognizedCount"],
+      "properties": {
+        "availability": { "enum": ["ready", "not-applicable", "failed"] },
+        "quality": { "enum": ["exact", "estimated", "unavailable"] },
+        "reason": { "type": "string" },
+        "affects": { "$ref": "#/$defs/affects" },
+        "recognizedCount": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/signalState" }]
+    },
+    "verification": {
+      "type": "object",
+      "required": ["availability", "reason", "affects", "recognizedCount", "knownResultCount", "unknownResultCount", "editsAfterLastVerify"],
+      "properties": {
+        "availability": { "enum": ["ready", "not-applicable", "failed"] },
+        "quality": { "enum": ["exact", "estimated", "unavailable"] },
+        "reason": { "type": "string" },
+        "affects": { "$ref": "#/$defs/affects" },
+        "recognizedCount": { "type": "integer", "minimum": 0 },
+        "knownResultCount": { "type": "integer", "minimum": 0 },
+        "unknownResultCount": { "type": "integer", "minimum": 0 },
+        "editsAfterLastVerify": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/signalState" }]
+    },
+    "subagents": {
+      "type": "object",
+      "required": ["availability", "reason", "affects", "exactCount", "derivedCount", "missingTraceCount", "unavailableTraceCount"],
+      "properties": {
+        "availability": { "enum": ["ready", "not-applicable", "failed"] },
+        "quality": { "enum": ["exact", "estimated", "unavailable"] },
+        "reason": { "type": "string" },
+        "affects": { "$ref": "#/$defs/affects" },
+        "exactCount": { "type": "integer", "minimum": 0 },
+        "derivedCount": { "type": "integer", "minimum": 0 },
+        "missingTraceCount": { "type": "integer", "minimum": 0 },
+        "unavailableTraceCount": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/signalState" }]
+    },
+    "signals": {
+      "type": "object",
+      "required": ["reads", "errors", "verification", "subagents"],
+      "properties": {
+        "reads": { "$ref": "#/$defs/reads" },
+        "errors": { "$ref": "#/$defs/errors" },
+        "verification": { "$ref": "#/$defs/verification" },
+        "subagents": { "$ref": "#/$defs/subagents" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
