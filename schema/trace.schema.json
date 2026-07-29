@@ -51,6 +51,7 @@
           },
           "resultBytes": { "type": "integer", "minimum": 0 },
           "isError": { "type": "boolean" },
+          "outcomeKnown": { "type": "boolean" },
           "summary": { "type": "string" }
         },
         "additionalProperties": false

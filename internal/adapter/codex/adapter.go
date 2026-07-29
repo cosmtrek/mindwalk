@@ -344,6 +344,7 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 			call.Input = applyPatchChanges(call.Input, patchResult.Changes)
 			if patchResult.Success != nil {
 				result.IsError = !*patchResult.Success
+				result.OutcomeKnown = true
 			}
 		}
 		trace.Events = append(trace.Events, adapter.BuildEvent(trace, call, result))
@@ -635,9 +636,11 @@ func decodeOutput(payload responseItemPayload) (string, adapter.ToolResult, bool
 		return "", adapter.ToolResult{}, false
 	}
 	output := adapter.ContentToString(payload.Output)
+	failed, known := commandOutputStatus(output)
 	return payload.CallID, adapter.ToolResult{
-		Content: output,
-		IsError: commandOutputFailed(output),
+		Content:      output,
+		IsError:      failed,
+		OutcomeKnown: known,
 	}, true
 }
 
@@ -719,7 +722,7 @@ func applyPatchChanges(input map[string]any, changes map[string]patchApplyChange
 
 var exitCodeRe = regexp.MustCompile(`(?im)^(?:Process exited with code|Exit code:)\s*([0-9]+)\s*$`)
 
-func commandOutputFailed(output string) bool {
+func commandOutputStatus(output string) (failed bool, known bool) {
 	trimmed := strings.TrimSpace(output)
 	var envelope struct {
 		ExitCode *int  `json:"exit_code"`
@@ -730,17 +733,17 @@ func commandOutputFailed(output string) bool {
 	}
 	if json.Unmarshal([]byte(trimmed), &envelope) == nil {
 		if envelope.ExitCode != nil {
-			return *envelope.ExitCode != 0
+			return *envelope.ExitCode != 0, true
 		}
 		if envelope.Metadata.ExitCode != nil {
-			return *envelope.Metadata.ExitCode != 0
+			return *envelope.Metadata.ExitCode != 0, true
 		}
 		if envelope.TimedOut != nil && *envelope.TimedOut {
-			return true
+			return true, true
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(trimmed), "apply_patch verification failed") {
-		return true
+		return true, true
 	}
 	firstLine := trimmed
 	if newline := strings.IndexByte(firstLine, '\n'); newline >= 0 {
@@ -748,10 +751,12 @@ func commandOutputFailed(output string) bool {
 	}
 	status := strings.ToLower(strings.TrimSpace(firstLine))
 	switch {
-	case strings.HasPrefix(status, "script completed"), strings.HasPrefix(status, "script running"):
-		return false
+	case strings.HasPrefix(status, "script completed"):
+		return false, true
 	case strings.HasPrefix(status, "script failed"):
-		return true
+		return true, true
+	case strings.HasPrefix(status, "script running"):
+		return false, false
 	}
 	header := trimmed
 	for _, marker := range []string{"\nOutput:\n", "\nFinal output:\n"} {
@@ -761,11 +766,14 @@ func commandOutputFailed(output string) bool {
 	}
 	for _, line := range strings.Split(header, "\n") {
 		if strings.EqualFold(strings.TrimSpace(line), "aborted by user") {
-			return true
+			return true, true
 		}
 	}
 	match := exitCodeRe.FindStringSubmatch(header)
-	return len(match) == 2 && match[1] != "0"
+	if len(match) == 2 {
+		return match[1] != "0", true
+	}
+	return false, false
 }
 
 func (a Adapter) titleFor(id string) string {

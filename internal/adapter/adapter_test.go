@@ -323,6 +323,21 @@ func TestBuildEventClassifiesBashSearchCommands(t *testing.T) {
 	}
 }
 
+func TestBuildEventPreservesOutcomeCertainty(t *testing.T) {
+	trace := &model.Trace{Session: model.TraceSession{Cwd: t.TempDir()}}
+	call := ToolCall{Name: "Bash", Input: map[string]any{"command": "go test ./..."}}
+
+	known := BuildEvent(trace, call, ToolResult{OutcomeKnown: true})
+	if !known.OutcomeKnown || known.IsError {
+		t.Fatalf("known event = %#v", known)
+	}
+
+	unknown := BuildEvent(trace, call, ToolResult{})
+	if unknown.OutcomeKnown || unknown.IsError {
+		t.Fatalf("unknown event = %#v", unknown)
+	}
+}
+
 func TestBuildEventExecActionAllSearchCommands(t *testing.T) {
 	source := `Promise.all([tools.exec_command({cmd:"rg TODO main.go"}), tools.exec_command({cmd:"ls src"})])`
 	event := buildExecEvent(t.TempDir(), map[string]any{"_raw": source})

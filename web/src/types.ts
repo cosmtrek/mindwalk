@@ -142,6 +142,7 @@ export interface TraceEvent {
   outside?: OutsideTouch[];
   resultBytes: number;
   isError: boolean;
+  outcomeKnown?: boolean;
   summary: string;
 }
 

@@ -91,6 +91,32 @@ func TestParsePendingToolUsesRemainDeterministic(t *testing.T) {
 	}
 }
 
+func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
+	session := filepath.Join(t.TempDir(), "outcome-certainty.jsonl")
+	writeSession(t, session,
+		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"user","content":"x"}}`,
+		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"assistant","content":[{"type":"tool_use","id":"success","name":"Bash","input":{"command":"go test ./..."}},{"type":"tool_use","id":"failure","name":"Bash","input":{"command":"make test"}},{"type":"tool_use","id":"unknown","name":"Bash","input":{"command":"npm test"}}]}}`,
+		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"user","content":[{"tool_use_id":"success","type":"tool_result","content":"ok","is_error":false},{"tool_use_id":"failure","type":"tool_result","content":"failed","is_error":true},{"tool_use_id":"unknown","type":"tool_result","content":"incomplete"}]}}`,
+	)
+
+	trace, err := (Adapter{}).Parse(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.Events) != 3 {
+		t.Fatalf("events = %#v", trace.Events)
+	}
+	if got := trace.Events[0]; !got.OutcomeKnown || got.IsError {
+		t.Fatalf("success event = %#v", got)
+	}
+	if got := trace.Events[1]; !got.OutcomeKnown || !got.IsError {
+		t.Fatalf("failure event = %#v", got)
+	}
+	if got := trace.Events[2]; got.OutcomeKnown || got.IsError {
+		t.Fatalf("unknown event = %#v", got)
+	}
+}
+
 func TestCompactionUsesSubtypeOnly(t *testing.T) {
 	session := filepath.Join(t.TempDir(), "compact.jsonl")
 	writeSession(t, session,
