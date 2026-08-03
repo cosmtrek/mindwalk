@@ -16,11 +16,11 @@ raw JSONL line by line doesn't answer any of that.
 Draw the repository as a night map, and play the session back as light moving
 through it: where the agent searched, read, and edited, the map glows —
 everything else stays dark. The agent's understanding of the task becomes a
-shape you can see at a glance. One Go binary reads Claude Code, Codex, and pi
-session logs, fully local; viewing sends nothing anywhere. The one exception
-is the optional session evaluation: when you explicitly run it, a summary of
-that session (task wording, file paths, event digests) is sent to the model
-behind your own `claude` or `codex` CLI — see
+shape you can see at a glance. One Go binary reads Claude Code, Codex, pi,
+and Copilot session logs, fully local; viewing sends nothing anywhere. The one
+exception is the optional session evaluation: when you explicitly run it, a
+summary of that session (task wording, file paths, event digests) is sent to
+the model behind your own `claude` or `codex` CLI — see
 [Session evaluation](#session-evaluation).
 
 ## Quick start
@@ -37,11 +37,11 @@ Windows archives are on [GitHub Releases](https://github.com/cosmtrek/mindwalk/r
 To build from source: `make setup && make build` → `bin/mindwalk`.
 
 With no arguments, mindwalk scans `~/.claude/projects`, `~/.codex/sessions`,
-and `~/.pi/agent/sessions`, serves the UI on a random local port, and opens a
-browser:
+`~/.pi/agent/sessions`, and `~/.copilot/sessions`, serves the UI on a random
+local port, and opens a browser:
 
 ```text
-mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR] [--pi-dir DIR]
+mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR] [--pi-dir DIR] [--copilot-dir DIR]
 mindwalk open [--no-open] <session.jsonl>   open one specific session
 mindwalk map [--no-open] <repo>             open a repository map, no session needed
 mindwalk build <repo> [-o out]              write the repository citymap JSON

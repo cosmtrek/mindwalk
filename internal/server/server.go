@@ -25,6 +25,7 @@ import (
 	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
+	"github.com/cosmtrek/mindwalk/internal/adapter/copilot"
 	"github.com/cosmtrek/mindwalk/internal/adapter/pi"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
 	"github.com/cosmtrek/mindwalk/internal/judge"
@@ -39,6 +40,7 @@ type Config struct {
 	ClaudeDir   string
 	CodexDir    string
 	PiDir       string
+	CopilotDir  string
 	OpenSession string
 	Dev         bool
 	RepoRoot    string
@@ -127,7 +129,7 @@ const (
 func New(cfg Config) *Server {
 	return &Server{
 		cfg:             cfg,
-		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}, pi.Adapter{Dir: cfg.PiDir}},
+		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}, pi.Adapter{Dir: cfg.PiDir}, copilot.Adapter{Dir: cfg.CopilotDir}},
 		traces:          map[string]*model.Trace{},
 		maps:            map[string]*model.CityMap{},
 		cacheAt:         map[string]time.Time{},
