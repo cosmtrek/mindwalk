@@ -131,8 +131,11 @@ func TestDuplicateSessionIDsUseDistinctKeysAndCaches(t *testing.T) {
 			t.Fatalf("key %q loaded %q, want %q", session.Key, trace.Session.Path, session.Path)
 		}
 	}
-	if len(s.traces) != 2 {
-		t.Fatalf("trace cache entries = %d, want 2", len(s.traces))
+	s.traceStore.mu.Lock()
+	cached := len(s.traceStore.snapshots)
+	s.traceStore.mu.Unlock()
+	if cached != 2 {
+		t.Fatalf("trace cache entries = %d, want 2", cached)
 	}
 	if _, err := s.findSession("shared-id"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("duplicate legacy ID error = %v", err)
@@ -328,9 +331,9 @@ func TestInflightLoadSurvivesPanickingLoader(t *testing.T) {
 		t.Fatalf("request after recovered panic: trace=%v city=%v err=%v", trace, city, err)
 	}
 
-	s.mu.Lock()
-	leaked := len(s.inflight)
-	s.mu.Unlock()
+	s.traceStore.mu.Lock()
+	leaked := len(s.traceStore.inflight)
+	s.traceStore.mu.Unlock()
 	if leaked != 0 {
 		t.Fatalf("inflight entries leaked: %d", leaked)
 	}
@@ -690,10 +693,12 @@ func TestAgentAPIsAreRootScoped(t *testing.T) {
 		t.Fatalf("projected child shares target line storage with source: got=%d want=4", got)
 	}
 
+	// The raw layer caches the child parse: re-requesting the same file
+	// version must serve from cache instead of re-reading the JSONL.
 	parsesBeforeSecondChild := source.parses["child-a"]
 	secondChild := requestSessionResource(t, s, http.MethodGet, "/api/sessions/root-a/agents/child-a/trace")
-	if secondChild.Code != http.StatusOK || source.parses["child-a"] != parsesBeforeSecondChild+1 {
-		t.Fatalf("direct child parse status=%d parses=%d body=%q", secondChild.Code, source.parses["child-a"], secondChild.Body.String())
+	if secondChild.Code != http.StatusOK || source.parses["child-a"] != parsesBeforeSecondChild {
+		t.Fatalf("child re-request reparsed: status=%d parses=%d body=%q", secondChild.Code, source.parses["child-a"], secondChild.Body.String())
 	}
 
 	for _, tc := range []struct {

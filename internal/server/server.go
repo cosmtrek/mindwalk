@@ -54,12 +54,7 @@ type Server struct {
 	sessionCatalog  map[string]model.SessionMeta
 	sessionAt       time.Time
 	freshGen        uint64
-	traces          map[string]*model.Trace
-	maps            map[string]*model.CityMap
-	cacheAt         map[string]time.Time
-	cacheUsed       map[string]time.Time
-	cacheFile       map[string]fileFingerprint
-	inflight        map[string]*inflightLoad
+	traceStore      *traceStore
 	agentGraphs     map[string]agentGraphCacheEntry
 	agentGraphLoads map[string]*inflightAgentGraph
 	summaries       map[string]summaryCacheEntry
@@ -74,14 +69,6 @@ type Server struct {
 type repoMapEntry struct {
 	city    *model.CityMap
 	builtAt time.Time
-}
-
-type inflightLoad struct {
-	done        chan struct{}
-	fingerprint fileFingerprint
-	trace       *model.Trace
-	city        *model.CityMap
-	err         error
 }
 
 type fileFingerprint struct {
@@ -129,15 +116,9 @@ const (
 )
 
 func New(cfg Config) *Server {
-	return &Server{
+	s := &Server{
 		cfg:             cfg,
 		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}, pi.Adapter{Dir: cfg.PiDir}},
-		traces:          map[string]*model.Trace{},
-		maps:            map[string]*model.CityMap{},
-		cacheAt:         map[string]time.Time{},
-		cacheUsed:       map[string]time.Time{},
-		cacheFile:       map[string]fileFingerprint{},
-		inflight:        map[string]*inflightLoad{},
 		agentGraphs:     map[string]agentGraphCacheEntry{},
 		agentGraphLoads: map[string]*inflightAgentGraph{},
 		summaries:       map[string]summaryCacheEntry{},
@@ -148,6 +129,10 @@ func New(cfg Config) *Server {
 		analyze:     analyzeState{jobs: map[string]*analyzeJob{}},
 		reportCache: judge.Cache{Dir: judge.DefaultCacheDir()},
 	}
+	// Method values, not results: the store observes buildCityMap overrides
+	// made after construction (tests swap it per case).
+	s.traceStore = newTraceStore(s.loadTraceAndMap, s.parseSessionTrace)
+	return s
 }
 
 func (s *Server) Start(openBrowser bool) error {
@@ -372,7 +357,9 @@ func (s *Server) handleSessionAgentTrace(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	trace, err := s.parseSessionTrace(child)
+	// The raw layer caches the unprojected parse; projecting onto the root
+	// city clones, so the cached trace is never mutated.
+	trace, err := s.traceStore.LoadRaw(child)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -681,55 +668,7 @@ func (s *Server) traceAndMap(selector string) (*model.Trace, *model.CityMap, err
 }
 
 func (s *Server) traceAndMapMeta(meta model.SessionMeta) (*model.Trace, *model.CityMap, error) {
-	key := meta.Key
-	if key == "" {
-		key = adapter.SessionKey(meta.Harness, meta.Path)
-	}
-	for {
-		fingerprint, err := fingerprintFile(meta.Path)
-		if err != nil {
-			s.mu.Lock()
-			s.deleteTraceCacheLocked(key)
-			s.mu.Unlock()
-			return nil, nil, err
-		}
-
-		s.mu.Lock()
-		if trace := s.traces[key]; trace != nil {
-			cachedFingerprint, versioned := s.cacheFile[key]
-			if versioned && cachedFingerprint.equal(fingerprint) && time.Since(s.cacheAt[key]) < traceCacheTTL {
-				city := s.maps[key]
-				s.cacheUsed[key] = time.Now()
-				s.mu.Unlock()
-				return trace, city, nil
-			}
-			s.deleteTraceCacheLocked(key)
-		}
-		if load := s.inflight[key]; load != nil {
-			done := load.done
-			shareSnapshot := fingerprint.equal(load.fingerprint)
-			s.mu.Unlock()
-			<-done
-
-			// Requests that observed the same source version must receive the
-			// same trace/city snapshot, even if the active file grows while the
-			// shared parse is running. A request that already observed a newer
-			// version retries after the older load completes.
-			if shareSnapshot {
-				return load.trace, load.city, load.err
-			}
-			continue
-		}
-		load := &inflightLoad{done: make(chan struct{}), fingerprint: fingerprint}
-		s.inflight[key] = load
-		s.mu.Unlock()
-
-		// Keep the pre-parse fingerprint. If the active session grows during
-		// parsing, the next request will see a mismatch and reload it instead
-		// of treating the partial snapshot as current.
-		s.runInflight(key, load, meta, fingerprint)
-		return load.trace, load.city, load.err
-	}
+	return s.traceStore.LoadSnapshot(meta)
 }
 
 func (s *Server) agentGraph(root model.SessionMeta) (*model.AgentGraph, error) {
@@ -876,36 +815,6 @@ func (s *Server) findCatalogSession(key string) (model.SessionMeta, error) {
 	return meta, nil
 }
 
-// runInflight executes the shared load for key and publishes the result on
-// load. The finalize step — cache the result, drop the inflight entry, close
-// load.done — runs in a defer so a panicking loader cannot skip it. Without
-// that, net/http's per-connection recover would swallow the panic while the
-// inflight entry stayed registered, and every later request for the key
-// would block forever on a done channel nothing closes.
-func (s *Server) runInflight(key string, load *inflightLoad, meta model.SessionMeta, fingerprint fileFingerprint) {
-	defer func() {
-		if r := recover(); r != nil {
-			load.trace, load.city = nil, nil
-			load.err = fmt.Errorf("load session %s: %v", key, r)
-			log.Printf("mindwalk: panic loading session %s: %v\n%s", key, r, debug.Stack())
-		}
-		s.mu.Lock()
-		if load.err == nil {
-			s.traces[key] = load.trace
-			s.maps[key] = load.city
-			s.cacheFile[key] = fingerprint
-			now := time.Now()
-			s.cacheAt[key] = now
-			s.cacheUsed[key] = now
-			s.evictTraceCacheLocked()
-		}
-		delete(s.inflight, key)
-		close(load.done)
-		s.mu.Unlock()
-	}()
-	load.trace, load.city, load.err = s.loadTraceAndMap(meta)
-}
-
 func (s *Server) loadTraceAndMap(meta model.SessionMeta) (*model.Trace, *model.CityMap, error) {
 	trace, err := s.parseSessionTrace(meta)
 	if err != nil {
@@ -1006,14 +915,6 @@ func (s *Server) findSession(selector string) (model.SessionMeta, error) {
 	return model.SessionMeta{}, errors.New("session not found")
 }
 
-func (s *Server) deleteTraceCacheLocked(key string) {
-	delete(s.traces, key)
-	delete(s.maps, key)
-	delete(s.cacheAt, key)
-	delete(s.cacheUsed, key)
-	delete(s.cacheFile, key)
-}
-
 func fingerprintFile(path string) (fileFingerprint, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -1024,24 +925,6 @@ func fingerprintFile(path string) (fileFingerprint, error) {
 
 func (f fileFingerprint) equal(other fileFingerprint) bool {
 	return f.size == other.size && f.modTime.Equal(other.modTime)
-}
-
-func (s *Server) evictTraceCacheLocked() {
-	for len(s.traces) > traceCacheMaxEntries {
-		var oldestKey string
-		var oldest time.Time
-		for key := range s.traces {
-			used := s.cacheUsed[key]
-			if oldestKey == "" || used.Before(oldest) {
-				oldestKey = key
-				oldest = used
-			}
-		}
-		if oldestKey == "" {
-			return
-		}
-		s.deleteTraceCacheLocked(oldestKey)
-	}
 }
 
 func (s *Server) openSessionKey() string {
