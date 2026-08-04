@@ -179,10 +179,14 @@ func (Builder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error
 					cityFiles = append(cityFiles, meta)
 					continue
 				}
+				if errors.Is(err, errNotRegular) {
+					// exists but is not city material — policy skip
+					continue
+				}
 				if !benignReadError(err) {
-					// timeout, permission, unmappable type — the file is
-					// not proven gone, so a ghost would lie; the map is
-					// just missing something it wanted to show.
+					// timeout, permission — the file is not proven gone,
+					// so a ghost would lie; the map is just missing
+					// something it wanted to show.
 					truncated = true
 					continue
 				}
@@ -214,9 +218,10 @@ func (Builder) Build(repoRoot string, trace *model.Trace) (*model.CityMap, error
 		}
 		meta, err := inspectFileBounded(root, rel)
 		if err != nil {
-			// vanished files never truncate the map; anything else —
-			// timeout, permission — is real content the map lost
-			if !benignReadError(err) {
+			// vanished files and policy-skipped non-regular entries never
+			// truncate the map; anything else — timeout, permission — is
+			// real content the map lost
+			if !benignReadError(err) && !errors.Is(err, errNotRegular) {
 				truncated = true
 			}
 			continue
@@ -631,6 +636,12 @@ func joinRel(dir, name string) string {
 	return dir + "/" + name
 }
 
+// errNotRegular marks an entry that exists but is never city material —
+// FIFOs, sockets, devices, symlinks resolving to directories. Skipping one
+// is policy, not data loss, and it is not proven gone either: no ghost, no
+// truncation.
+var errNotRegular = errors.New("not a regular file")
+
 // benignReadError reports read failures that lose nothing mappable: the
 // path is gone, or was never a directory (a stale trace seed). Everything
 // else — timeout, permission, IO — is content the map failed to show and
@@ -715,7 +726,7 @@ func inspectFile(root, rel string) (model.CityFile, error) {
 	}
 	if !info.Mode().IsRegular() {
 		// FIFOs, sockets, devices — opening these can block forever
-		return model.CityFile{}, errors.New("not a regular file")
+		return model.CityFile{}, errNotRegular
 	}
 	lines := 1
 	if info.Size() > maxLineCountBytes {

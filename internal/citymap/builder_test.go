@@ -500,6 +500,48 @@ func TestNoFalseTruncatedWhenEverythingFits(t *testing.T) {
 	}
 }
 
+func TestNonRegularEntriesArePolicySkipsNotTruncation(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module m\n")
+	writeFile(t, root, "a.go", "package main\n")
+	writeFile(t, root, "sub/real.go", "package sub\n")
+	// a symlink resolving to a directory is collected by the walk but can
+	// never become a building
+	if err := os.Symlink(filepath.Join(root, "sub"), filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	city, err := (Builder{}).Build(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range city.Files {
+		if file.Path == "link" {
+			t.Fatalf("symlinked directory became a building: %#v", file)
+		}
+	}
+	if city.Repo.Truncated {
+		t.Fatal("policy-skipped non-regular entries must not mark the map partial")
+	}
+
+	// same rule on the trace path: not gone, so no ghost — and no badge
+	trace := &model.Trace{Events: []model.Event{{
+		Targets: []model.Target{{Path: "link", Touch: "edit"}},
+	}}}
+	city, err = (Builder{}).Build(root, trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range city.Files {
+		if file.Path == "link" {
+			t.Fatalf("touched non-regular entry entered the map: %#v", file)
+		}
+	}
+	if city.Repo.Truncated {
+		t.Fatal("touched non-regular entries are policy skips too")
+	}
+}
+
 func TestMarkerlessWorkspaceMapsOnlyLooseFiles(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "loose.txt", "note\n")
