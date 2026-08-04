@@ -30,6 +30,14 @@ type AgentGraphSource interface {
 	BuildAgentGraph(root model.SessionMeta, catalog []model.SessionMeta) (*model.AgentGraph, error)
 }
 
+// SummarySidecarSource lists companion files whose contents feed Summarize
+// for a session path. Which files a harness keeps beside its session logs is
+// adapter knowledge; callers only fingerprint the returned paths to decide
+// whether a cached summary is still valid.
+type SummarySidecarSource interface {
+	SummaryInputs(path string) []string
+}
+
 type ToolCall struct {
 	ID        string
 	Name      string

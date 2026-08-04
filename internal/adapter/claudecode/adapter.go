@@ -66,6 +66,16 @@ func (a Adapter) ListSessions() ([]model.SessionMeta, error) {
 	return metas, nil
 }
 
+// SummaryInputs reports the sidecar files Summarize reads for path: child
+// agent sessions carry an agent-*.meta.json describing the spawning tool
+// call, so a sidecar change must invalidate a cached summary.
+func (a Adapter) SummaryInputs(path string) []string {
+	if !strings.HasPrefix(filepath.Base(path), "agent-") {
+		return nil
+	}
+	return []string{strings.TrimSuffix(path, ".jsonl") + ".meta.json"}
+}
+
 func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 	f, err := os.Open(path)
 	if err != nil {

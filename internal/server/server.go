@@ -95,11 +95,12 @@ type inflightAgentGraph struct {
 }
 
 type summaryCacheEntry struct {
-	size          int64
-	modTime       time.Time
-	sidecar       fileFingerprint
-	sidecarExists bool
-	meta          model.SessionMeta
+	size    int64
+	modTime time.Time
+	// sidecar is opaque validation material for the companion files the
+	// source declared via SummaryInputs; empty when there are none.
+	sidecar string
+	meta    model.SessionMeta
 }
 
 const (
@@ -612,10 +613,10 @@ func (s *Server) summarizeCached(source adapter.Source, path string, info fs.Fil
 		}
 	}
 	key := summaryKey(source, path)
-	sidecar, sidecarExists := summarySidecarFingerprint(source, path)
+	sidecar := summarySidecarDigest(source, path)
 	s.mu.Lock()
 	if cached, ok := s.summaries[key]; ok && cached.size == info.Size() && cached.modTime.Equal(info.ModTime()) &&
-		cached.sidecarExists == sidecarExists && cached.sidecar.equal(sidecar) {
+		cached.sidecar == sidecar {
 		meta := cached.meta
 		s.mu.Unlock()
 		return meta, nil
@@ -631,22 +632,36 @@ func (s *Server) summarizeCached(source adapter.Source, path string, info fs.Fil
 	}
 	s.mu.Lock()
 	s.summaries[key] = summaryCacheEntry{
-		size:          info.Size(),
-		modTime:       info.ModTime(),
-		sidecar:       sidecar,
-		sidecarExists: sidecarExists,
-		meta:          meta,
+		size:    info.Size(),
+		modTime: info.ModTime(),
+		sidecar: sidecar,
+		meta:    meta,
 	}
 	s.mu.Unlock()
 	return meta, nil
 }
 
-func summarySidecarFingerprint(source adapter.Source, path string) (fileFingerprint, bool) {
-	if source.Harness() != "claude-code" || !strings.HasPrefix(filepath.Base(path), "agent-") {
-		return fileFingerprint{}, false
+// summarySidecarDigest fingerprints the companion files the source declares
+// for path. The server holds no harness-specific sidecar knowledge — sources
+// that keep files beside their session logs implement SummarySidecarSource.
+func summarySidecarDigest(source adapter.Source, path string) string {
+	sidecars, ok := source.(adapter.SummarySidecarSource)
+	if !ok {
+		return ""
 	}
-	fingerprint, err := fingerprintFile(strings.TrimSuffix(path, ".jsonl") + ".meta.json")
-	return fingerprint, err == nil
+	inputs := sidecars.SummaryInputs(path)
+	if len(inputs) == 0 {
+		return ""
+	}
+	var material strings.Builder
+	for _, input := range inputs {
+		if fingerprint, err := fingerprintFile(input); err == nil {
+			fmt.Fprintf(&material, "%s\x00%d\x00%d\n", input, fingerprint.size, fingerprint.modTime.UnixNano())
+		} else {
+			fmt.Fprintf(&material, "%s\x00missing\n", input)
+		}
+	}
+	return material.String()
 }
 
 func (s *Server) pruneSummaryCache(seen map[string]bool) {
