@@ -97,6 +97,7 @@ type agentGraphFingerprint struct {
 type agentGraphCacheEntry struct {
 	fingerprint agentGraphFingerprint
 	graph       *model.AgentGraph
+	used        time.Time
 }
 
 type inflightAgentGraph struct {
@@ -122,6 +123,9 @@ const (
 	// serve current as the tree changes without rebuilding on every request
 	repoMapTTL        = 30 * time.Second
 	repoMapMaxEntries = 16
+	// agent graphs are small but were the one unbounded cache; bound them the
+	// same way as traces
+	agentGraphMaxEntries = 16
 )
 
 func New(cfg Config) *Server {
@@ -147,12 +151,6 @@ func New(cfg Config) *Server {
 }
 
 func (s *Server) Start(openBrowser bool) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/sessions", s.handleSessions)
-	mux.HandleFunc("/api/sessions/", s.handleSessionResource)
-	mux.HandleFunc("/api/repomap", s.handleRepoMap)
-	mux.HandleFunc("/", s.handleStatic)
-
 	port := s.cfg.Port
 	if port == 0 {
 		port = 0
@@ -179,7 +177,58 @@ func (s *Server) Start(openBrowser bool) error {
 		_ = openURL(pageURL)
 	}
 	fmt.Printf("mindwalk serving %s\n", addr)
-	return http.Serve(ln, mux)
+	return http.Serve(ln, s.handler())
+}
+
+func (s *Server) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/sessions", s.handleSessions)
+	mux.HandleFunc("/api/sessions/", s.handleSessionResource)
+	mux.HandleFunc("/api/repomap", s.handleRepoMap)
+	mux.HandleFunc("/", s.handleStatic)
+	return requireLoopback(mux)
+}
+
+// requireLoopback rejects requests that did not originate locally. Binding to
+// 127.0.0.1 alone does not keep browsers out: any web page can fire
+// cross-site requests straight at a loopback port, and DNS rebinding can
+// point an attacker-controlled name at 127.0.0.1. The Host check pins the
+// name rebinding would forge; the Origin / Sec-Fetch-Site check stops
+// cross-site state changes — POST /analyze starts a judge run that costs
+// tokens and minutes. Requests without an Origin header (curl, same-origin
+// navigations) pass untouched.
+func requireLoopback(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) {
+			http.Error(w, "forbidden: non-local Host", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodGet {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				parsed, err := url.Parse(origin)
+				if err != nil || !loopbackHost(parsed.Host) {
+					http.Error(w, "forbidden: cross-site request", http.StatusForbidden)
+					return
+				}
+			}
+			switch r.Header.Get("Sec-Fetch-Site") {
+			case "", "same-origin", "none":
+			default:
+				http.Error(w, "forbidden: cross-site request", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func loopbackHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -370,7 +419,7 @@ func (s *Server) repoCityMap(repo string) (*model.CityMap, error) {
 	if entry, ok := s.repoMaps[repo]; ok && time.Since(entry.builtAt) < repoMapTTL {
 		return entry.city, nil
 	}
-	city, err := citymap.Builder{}.Build(repo, nil)
+	city, err := s.buildCityMap(repo, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -728,6 +777,8 @@ func (s *Server) agentGraph(root model.SessionMeta) (*model.AgentGraph, error) {
 
 		s.mu.Lock()
 		if cached, ok := s.agentGraphs[root.Key]; ok && cached.fingerprint == fingerprint {
+			cached.used = time.Now()
+			s.agentGraphs[root.Key] = cached
 			s.mu.Unlock()
 			return cached.graph, nil
 		}
@@ -784,7 +835,8 @@ func (s *Server) runAgentGraphInflight(key string, load *inflightAgentGraph, sou
 		}
 		s.mu.Lock()
 		if load.err == nil {
-			s.agentGraphs[key] = agentGraphCacheEntry{fingerprint: load.fingerprint, graph: load.graph}
+			s.agentGraphs[key] = agentGraphCacheEntry{fingerprint: load.fingerprint, graph: load.graph, used: time.Now()}
+			s.evictAgentGraphsLocked()
 		}
 		if s.agentGraphLoads[key] == load {
 			delete(s.agentGraphLoads, key)
@@ -793,6 +845,25 @@ func (s *Server) runAgentGraphInflight(key string, load *inflightAgentGraph, sou
 		s.mu.Unlock()
 	}()
 	load.graph, load.err = source.BuildAgentGraph(root, catalog)
+}
+
+// evictAgentGraphsLocked bounds the graph cache by dropping the least
+// recently used entries. Caller must hold mu.
+func (s *Server) evictAgentGraphsLocked() {
+	for len(s.agentGraphs) > agentGraphMaxEntries {
+		var oldestKey string
+		var oldest time.Time
+		for key, entry := range s.agentGraphs {
+			if oldestKey == "" || entry.used.Before(oldest) {
+				oldestKey = key
+				oldest = entry.used
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(s.agentGraphs, oldestKey)
+	}
 }
 
 func (s *Server) findCatalogSession(key string) (model.SessionMeta, error) {
@@ -852,6 +923,7 @@ func (s *Server) loadTraceAndMap(meta model.SessionMeta) (*model.Trace, *model.C
 	}
 	city, err := s.buildCityMap(repoRoot, trace)
 	if err != nil {
+		log.Printf("mindwalk: citymap build failed for %s: %v; serving empty map", repoRoot, err)
 		city = emptyCityMap(repoRoot)
 	} else {
 		assignFileIDs(trace, city)
