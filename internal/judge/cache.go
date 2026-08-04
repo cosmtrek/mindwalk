@@ -28,6 +28,12 @@ func (c Cache) path(sessionKey string) string {
 	return filepath.Join(c.Dir, sessionKey+".json")
 }
 
+// Path returns the on-disk location of the session's report file, for
+// callers that fingerprint reports without loading them.
+func (c Cache) Path(sessionKey string) string {
+	return c.path(sessionKey)
+}
+
 // Load returns the cached report for the session key, or nil when absent or
 // unreadable (a corrupt cache entry is treated as a miss, not an error).
 func (c Cache) Load(sessionKey string) *model.Report {
@@ -68,20 +74,37 @@ func (c Cache) Load(sessionKey string) *model.Report {
 	return &report
 }
 
-// Fresh reports whether a cached report still matches the trace it would be
-// regenerated from: same prompt version and the same judge input digest —
-// event counts alone miss user messages (stored as marks) and content edits.
-// The rubric layer is checked against the current task evidence separately,
-// because its input window is wider than the scoring document's. The judge
-// CLI is deliberately not part of freshness — a valid report stays valid.
-// Reports from before the digest existed are stale by construction.
-func Fresh(report *model.Report, trace *model.Trace) bool {
+// FreshAgainstTrace reports whether a cached report still matches the trace
+// it would be regenerated from: same prompt version and the same judge input
+// digest — event counts alone miss user messages (stored as marks) and
+// content edits. The rubric layer is checked against the current task
+// evidence separately, because its input window is wider than the scoring
+// document's. The judge CLI is deliberately not part of freshness — a valid
+// report stays valid. Reports from before the digest existed are stale by
+// construction.
+func FreshAgainstTrace(report *model.Report, trace *model.Trace) bool {
 	if report == nil ||
 		report.Judge.PromptVersion != PromptVersion ||
 		report.Judge.InputDigest != InputDigest(trace) {
 		return false
 	}
 	return rubricFresh(report, trace)
+}
+
+// FreshAgainstSummary is the cheap approximation of FreshAgainstTrace for
+// callers holding only a session summary (the list view): it shares the
+// prompt-version and digest-presence preconditions but compares the
+// summary's event and user-turn counts instead of recomputing the input
+// digest, so no trace parse is needed. It may call a report fresh that
+// FreshAgainstTrace grades stale (a content edit that keeps both counts);
+// the panel's full check corrects that. User turns catch message-only
+// growth the event count is blind to.
+func FreshAgainstSummary(report *model.Report, meta model.SessionMeta) bool {
+	return report != nil &&
+		report.Judge.PromptVersion == PromptVersion &&
+		report.Judge.InputDigest != "" &&
+		report.Session.EventCount == meta.EventCount &&
+		report.Session.UserTurns == meta.UserTurns
 }
 
 // rubricFresh verifies the rubric layer against the CURRENT task evidence.

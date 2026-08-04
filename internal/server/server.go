@@ -64,6 +64,7 @@ type Server struct {
 
 	analyze     analyzeState
 	reportCache judge.Cache
+	reportIndex reportIndex
 }
 
 type repoMapEntry struct {

@@ -192,7 +192,7 @@ func analyze(args []string) error {
 		// A rubric-enabled request is only answered from cache when the report
 		// already settles the rubric question; a rubric-less fresh report gets
 		// re-run rather than silently returned without the layer.
-		if judge.Fresh(cached, tr) && judgeMatches(cached, *judgeCLI, *judgeModel) &&
+		if judge.FreshAgainstTrace(cached, tr) && judgeMatches(cached, *judgeCLI, *judgeModel) &&
 			judge.RubricSatisfied(cached) {
 			fmt.Fprintln(os.Stderr, "mindwalk: using cached report (pass --no-cache to re-run)")
 			return writeJSON(*out, cached)

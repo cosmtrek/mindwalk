@@ -250,22 +250,22 @@ func TestCacheRoundTripAndFreshness(t *testing.T) {
 	if loaded == nil || loaded.Session.ID != "s1" {
 		t.Fatalf("loaded = %#v", loaded)
 	}
-	if !Fresh(loaded, trace) {
+	if !FreshAgainstTrace(loaded, trace) {
 		t.Fatal("expected fresh")
 	}
 	// A new user message lands in marks, not events: the count is unchanged
 	// but the judge input moved, so the report must go stale.
 	trace.Marks = append(trace.Marks, model.Mark{Seq: 3, Type: "user-message", Note: "不要修改代码"})
-	if Fresh(loaded, trace) {
+	if FreshAgainstTrace(loaded, trace) {
 		t.Fatal("expected stale after a new user message with no new events")
 	}
 	trace = sampleTrace()
 	trace.Events = append(trace.Events, model.Event{Seq: 3, Action: "edit", Summary: "Edit b.go"})
 	trace.Session.EventCount = 4
-	if Fresh(loaded, trace) {
+	if FreshAgainstTrace(loaded, trace) {
 		t.Fatal("expected stale after event growth")
 	}
-	if Fresh(&model.Report{Judge: model.ReportJudge{PromptVersion: PromptVersion}}, sampleTrace()) {
+	if FreshAgainstTrace(&model.Report{Judge: model.ReportJudge{PromptVersion: PromptVersion}}, sampleTrace()) {
 		t.Fatal("report without a digest must be stale")
 	}
 	if cache.Load("missing") != nil {

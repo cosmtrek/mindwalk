@@ -497,32 +497,32 @@ func TestFreshChecksRubricPromptVersion(t *testing.T) {
 			TaskDigest: TaskDigest(trace, model.RubricSourceFull),
 		},
 	}
-	if Fresh(scored, trace) {
+	if FreshAgainstTrace(scored, trace) {
 		t.Fatal("scored rubric without a rubric prompt version must be stale")
 	}
 	scored.Judge.RubricPromptVersion = RubricPromptVersion
-	if !Fresh(scored, trace) {
+	if !FreshAgainstTrace(scored, trace) {
 		t.Fatal("expected fresh with matching rubric prompt version")
 	}
 	// A scored rubric that cannot say what it fingerprinted is stale.
 	scored.Rubric.Source = ""
-	if Fresh(scored, trace) {
+	if FreshAgainstTrace(scored, trace) {
 		t.Fatal("scored rubric without a source must be stale")
 	}
 	scored.Rubric.Source = model.RubricSourceFull
 	scored.Rubric.TaskDigest = "stale"
-	if Fresh(scored, trace) {
+	if FreshAgainstTrace(scored, trace) {
 		t.Fatal("scored rubric with a mismatched task digest must be stale")
 	}
 
 	// Deterministic skips and rubric-less reports never pin the version.
 	skipped := &model.Report{Version: 1, Judge: base,
 		Rubric: &model.Rubric{Status: model.RubricStatusUnavailable, Reason: model.RubricReasonWeakTaskText}}
-	if !Fresh(skipped, trace) {
+	if !FreshAgainstTrace(skipped, trace) {
 		t.Fatal("deterministic skip must stay fresh")
 	}
 	bare := &model.Report{Version: 1, Judge: base}
-	if !Fresh(bare, trace) {
+	if !FreshAgainstTrace(bare, trace) {
 		t.Fatal("rubric-less report must stay fresh")
 	}
 }
@@ -562,10 +562,10 @@ func TestFreshTracksTaskEvidenceBeyondScoringWindow(t *testing.T) {
 			TaskDigest: TaskDigest(before, model.RubricSourceFull),
 		},
 	}
-	if !Fresh(report, before) {
+	if !FreshAgainstTrace(report, before) {
 		t.Fatal("expected fresh against the trace it was generated from")
 	}
-	if Fresh(report, after) {
+	if FreshAgainstTrace(report, after) {
 		t.Fatal("mid-window task change must stale the rubric-bearing report")
 	}
 
@@ -593,10 +593,10 @@ func TestFreshTracksTaskEvidenceBeyondScoringWindow(t *testing.T) {
 		Judge:   model.ReportJudge{CLI: "stub", PromptVersion: PromptVersion, InputDigest: InputDigest(weakBefore)},
 		Rubric:  &model.Rubric{Status: model.RubricStatusUnavailable, Reason: model.RubricReasonWeakTaskText},
 	}
-	if !Fresh(skipped, weakBefore) {
+	if !FreshAgainstTrace(skipped, weakBefore) {
 		t.Fatal("weak-task-text skip should stay fresh while the evidence stays weak")
 	}
-	if Fresh(skipped, weakAfter) {
+	if FreshAgainstTrace(skipped, weakAfter) {
 		t.Fatal("enriched task evidence must stale the weak-task-text skip")
 	}
 }

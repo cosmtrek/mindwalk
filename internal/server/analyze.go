@@ -60,9 +60,9 @@ func (a *analyzeState) snapshot(key string) (analyzeJob, bool) {
 }
 
 // reportStateFor grades one session for the list view: "running" while a
-// judge job is in flight, then "done" / "stale" / "failed". Staleness here
-// compares the report against the summary event count — cheap, no trace
-// parse — so the badge can be a touch more approximate than the panel.
+// judge job is in flight, then "done" / "stale" / "failed". The badge uses
+// the summary approximation of freshness (no trace parse, no per-session
+// disk probe); the panel's FreshAgainstTrace check stays the precise one.
 func (s *Server) reportStateFor(meta model.SessionMeta) string {
 	job, ok := s.analyze.snapshot(meta.Key)
 	var report *model.Report
@@ -74,18 +74,12 @@ func (s *Server) reportStateFor(meta model.SessionMeta) string {
 	case ok && job.report != nil:
 		report = job.report
 	default:
-		report = s.reportCache.Load(meta.Key)
+		report = s.reportIndex.load(s.reportCache, meta.Key)
 	}
 	if report == nil {
 		return ""
 	}
-	// A report without an input digest predates digest freshness and the
-	// panel will grade it stale — say so here too rather than disagree. User
-	// turns catch message-only growth the event count is blind to.
-	if report.Session.EventCount != meta.EventCount ||
-		report.Session.UserTurns != meta.UserTurns ||
-		report.Judge.PromptVersion != judge.PromptVersion ||
-		report.Judge.InputDigest == "" {
+	if !judge.FreshAgainstSummary(report, meta) {
 		return "stale"
 	}
 	return "done"
@@ -147,12 +141,12 @@ func (s *Server) handleSessionReport(w http.ResponseWriter, r *http.Request, sel
 	case ok && job.report != nil:
 		status.State = "done"
 		status.Report = job.report
-		status.Stale = !judge.Fresh(job.report, trace)
+		status.Stale = !judge.FreshAgainstTrace(job.report, trace)
 	default:
-		if cached := s.reportCache.Load(meta.Key); cached != nil {
+		if cached := s.reportIndex.load(s.reportCache, meta.Key); cached != nil {
 			status.State = "done"
 			status.Report = cached
-			status.Stale = !judge.Fresh(cached, trace)
+			status.Stale = !judge.FreshAgainstTrace(cached, trace)
 		}
 	}
 	writeJSON(w, status)
@@ -266,6 +260,11 @@ func (s *Server) runAnalyze(key string, trace *model.Trace, job *analyzeJob, cli
 	persisted := false
 	if err == nil && !noRubric && s.reportCache.Dir != "" {
 		persisted = s.reportCache.Store(key, report) == nil
+	}
+	if persisted {
+		// Polls landing between the store and the index's next directory scan
+		// must find the report once the job entry is dropped below.
+		s.reportIndex.markPresent(key)
 	}
 
 	s.analyze.mu.Lock()
