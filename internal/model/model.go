@@ -12,6 +12,9 @@ type RepoMeta struct {
 	Commit      string `json:"commit,omitempty"`
 	Dirty       bool   `json:"dirty"`
 	GeneratedAt string `json:"generatedAt"`
+	// Truncated marks a map that hit a scan or size budget — the session's
+	// tree (or its trace targets) holds more than the citymap shows.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 type CityMap struct {

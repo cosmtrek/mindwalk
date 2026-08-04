@@ -96,6 +96,11 @@ export const Hud = memo(function Hud({
                 {stats.filesInRepo} files
               </span>
             ) : null}
+            {city.repo.truncated ? (
+              <span data-hint="The tree holds more files than the map shows — scanning stopped at the budget">
+                partial map
+              </span>
+            ) : null}
           </div>
         ) : null}
         {stats ? (

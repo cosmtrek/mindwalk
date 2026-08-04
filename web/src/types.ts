@@ -84,6 +84,8 @@ export interface CityMap {
     commit?: string;
     dirty: boolean;
     generatedAt: string;
+    /** the tree holds more files than the map shows — a scan budget cut in */
+    truncated?: boolean;
   };
   files: CityFile[];
   dirs: CityDir[];

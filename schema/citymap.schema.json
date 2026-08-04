@@ -13,7 +13,8 @@
         "root": { "type": "string" },
         "commit": { "type": "string" },
         "dirty": { "type": "boolean" },
-        "generatedAt": { "type": "string" }
+        "generatedAt": { "type": "string" },
+        "truncated": { "type": "boolean" }
       },
       "additionalProperties": false
     },
