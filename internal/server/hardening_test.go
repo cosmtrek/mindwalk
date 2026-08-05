@@ -15,15 +15,19 @@ func TestHandlerRejectsNonLocalHost(t *testing.T) {
 	s := New(Config{})
 	handler := s.handler()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/repomap", nil)
-	req.Host = "evil.example:8765"
-	resp := httptest.NewRecorder()
-	handler.ServeHTTP(resp, req)
-	if resp.Code != http.StatusForbidden {
-		t.Fatalf("non-local Host status = %d, want 403", resp.Code)
+	// A stray bracket must not normalize into an allowed host.
+	for _, host := range []string{"evil.example:8765", "localhost]", "localhost]:8765", "[localhost:8765"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/repomap", nil)
+		req.Host = host
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("Host %q status = %d, want 403", host, resp.Code)
+		}
 	}
 
-	for _, host := range []string{"127.0.0.1:8765", "localhost:8765", "[::1]:8765"} {
+	// Host names are case-insensitive.
+	for _, host := range []string{"127.0.0.1:8765", "localhost:8765", "LOCALHOST:8765", "[::1]:8765"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/repomap", nil)
 		req.Host = host
 		resp := httptest.NewRecorder()

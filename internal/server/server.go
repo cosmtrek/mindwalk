@@ -213,7 +213,7 @@ func loopbackHost(hostport string) bool {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
 	}
-	host = strings.Trim(host, "[]")
+	host = normalizeHost(host)
 	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
@@ -236,7 +236,17 @@ func hostPortKey(hostport string) string {
 	if err != nil {
 		host, port = hostport, "80"
 	}
-	return strings.ToLower(strings.Trim(host, "[]")) + ":" + port
+	return normalizeHost(host) + ":" + port
+}
+
+// normalizeHost lowercases a host and strips one matched pair of IPv6
+// brackets. Unmatched brackets stay put, so a malformed host ("localhost]")
+// remains malformed instead of normalizing into an allowed value.
+func normalizeHost(host string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	return strings.ToLower(host)
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
