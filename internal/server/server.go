@@ -182,7 +182,9 @@ func (s *Server) handler() http.Handler {
 // point an attacker-controlled name at 127.0.0.1. The Host check pins the
 // name rebinding would forge; the Origin / Sec-Fetch-Site check stops
 // cross-site state changes — POST /analyze starts a judge run that costs
-// tokens and minutes. Requests without an Origin header (curl, same-origin
+// tokens and minutes. An Origin must name this server exactly: another
+// loopback origin (a different local server's page, or another port) is
+// still cross-origin. Requests without an Origin header (curl, same-origin
 // navigations) pass untouched.
 func requireLoopback(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,12 +193,9 @@ func requireLoopback(next http.Handler) http.Handler {
 			return
 		}
 		if r.Method != http.MethodGet {
-			if origin := r.Header.Get("Origin"); origin != "" {
-				parsed, err := url.Parse(origin)
-				if err != nil || !loopbackHost(parsed.Host) {
-					http.Error(w, "forbidden: cross-site request", http.StatusForbidden)
-					return
-				}
+			if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r.Host) {
+				http.Error(w, "forbidden: cross-site request", http.StatusForbidden)
+				return
 			}
 			switch r.Header.Get("Sec-Fetch-Site") {
 			case "", "same-origin", "none":
@@ -216,6 +215,28 @@ func loopbackHost(hostport string) bool {
 	}
 	host = strings.Trim(host, "[]")
 	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+// sameOrigin reports whether the Origin header names this server: scheme
+// http (the server never terminates TLS) and the same normalized host:port
+// the request was addressed to. "null" and malformed origins fail parsing
+// and are rejected.
+func sameOrigin(origin, requestHost string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" {
+		return false
+	}
+	return hostPortKey(parsed.Host) == hostPortKey(requestHost)
+}
+
+// hostPortKey normalizes a host:port for origin comparison: lowercased host,
+// IPv6 brackets stripped, the http default port made explicit.
+func hostPortKey(hostport string) string {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host, port = hostport, "80"
+	}
+	return strings.ToLower(strings.Trim(host, "[]")) + ":" + port
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {

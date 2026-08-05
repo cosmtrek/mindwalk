@@ -79,6 +79,26 @@ func (a Adapter) ListSessions() ([]model.SessionMeta, error) {
 	return metas, nil
 }
 
+// SummaryInputs reports the sidecar files Summarize reads for a session:
+// titles come from a session_index.jsonl resolved next to the sessions
+// directory or at the default location, so an index change — a Codex thread
+// rename — must invalidate cached summaries. Candidates are declared even
+// while missing (unlike indexPath, which stat-gates), so creating the index
+// later invalidates too.
+func (a Adapter) SummaryInputs(_ string) []string {
+	if a.IndexPath != "" {
+		return []string{a.IndexPath}
+	}
+	var inputs []string
+	if dir := filepath.Clean(a.SessionDir()); dir != "" && dir != "." {
+		inputs = append(inputs, filepath.Join(filepath.Dir(dir), "session_index.jsonl"))
+	}
+	if candidate := DefaultIndexPath(); candidate != "" && (len(inputs) == 0 || inputs[0] != candidate) {
+		inputs = append(inputs, candidate)
+	}
+	return inputs
+}
+
 func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 	f, err := os.Open(path)
 	if err != nil {

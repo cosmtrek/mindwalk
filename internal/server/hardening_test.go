@@ -57,6 +57,12 @@ func TestAnalyzeRejectsCrossSiteRequests(t *testing.T) {
 		{"", "cross-site"},
 		{"", "same-site"},
 		{"http://127.0.0.1:8765", "cross-site"},
+		// Loopback is not same-origin: another local server's page — a
+		// different host name, port, or scheme — must not pass.
+		{"http://localhost:9999", ""},
+		{"http://127.0.0.1:9999", ""},
+		{"http://localhost:8765", ""},
+		{"https://127.0.0.1:8765", ""},
 	}
 	for _, c := range rejected {
 		if code := post(c.origin, c.fetchSite); code != http.StatusForbidden {
@@ -68,8 +74,8 @@ func TestAnalyzeRejectsCrossSiteRequests(t *testing.T) {
 	// pass the middleware; 404 here means the handler ran and found no session.
 	allowed := []struct{ origin, fetchSite string }{
 		{"", ""},
+		{"http://127.0.0.1:8765", ""},
 		{"http://127.0.0.1:8765", "same-origin"},
-		{"http://localhost:8765", ""},
 		{"", "none"},
 	}
 	for _, c := range allowed {
