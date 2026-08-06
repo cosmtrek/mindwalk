@@ -79,6 +79,34 @@ func TestParseLinearSession(t *testing.T) {
 	}
 }
 
+func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
+	root := t.TempDir()
+	path := writeSession(t,
+		header(root),
+		`{"type":"message","id":"a1","parentId":null,"timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"success","name":"read","arguments":{"path":"ok.go"}},{"type":"toolCall","id":"failure","name":"edit","arguments":{"path":"bad.go"}},{"type":"toolCall","id":"unknown","name":"bash","arguments":{"command":"sleep 100"}}],"stopReason":"toolUse"}}`,
+		`{"type":"message","id":"r1","parentId":"a1","timestamp":"2026-07-21T14:35:02.000Z","message":{"role":"toolResult","toolCallId":"success","toolName":"read","content":[{"type":"text","text":"ok"}],"isError":false}}`,
+		`{"type":"message","id":"r2","parentId":"r1","timestamp":"2026-07-21T14:35:03.000Z","message":{"role":"toolResult","toolCallId":"failure","toolName":"edit","content":[{"type":"text","text":"failed"}],"isError":true}}`,
+		`{"type":"message","id":"r3","parentId":"r2","timestamp":"2026-07-21T14:35:04.000Z","message":{"role":"toolResult","toolCallId":"unknown","toolName":"bash","content":[{"type":"text","text":"still running"}]}}`,
+	)
+
+	trace, err := (Adapter{}).Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.Events) != 3 {
+		t.Fatalf("events = %#v", trace.Events)
+	}
+	if got := trace.Events[0]; !got.OutcomeKnown || got.IsError {
+		t.Fatalf("success event = %#v", got)
+	}
+	if got := trace.Events[1]; !got.OutcomeKnown || !got.IsError {
+		t.Fatalf("failure event = %#v", got)
+	}
+	if got := trace.Events[2]; got.OutcomeKnown || got.IsError {
+		t.Fatalf("unknown event = %#v", got)
+	}
+}
+
 func TestParseFollowsTrunkAcrossBranches(t *testing.T) {
 	root := t.TempDir()
 	fileA := filepath.Join(root, "a.go")
@@ -187,14 +215,14 @@ func TestParseBashExecution(t *testing.T) {
 	if len(trace.Events) != 3 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
-	if trace.Events[0].Tool != "bash" || !trace.Events[0].IsError {
+	if trace.Events[0].Tool != "bash" || !trace.Events[0].OutcomeKnown || !trace.Events[0].IsError {
 		t.Fatalf("failed command event = %#v", trace.Events[0])
 	}
-	if trace.Events[1].Action != "verify" || trace.Events[1].IsError {
+	if trace.Events[1].Action != "verify" || !trace.Events[1].OutcomeKnown || trace.Events[1].IsError {
 		t.Fatalf("verify event = %#v", trace.Events[1])
 	}
-	if trace.Events[2].IsError {
-		t.Fatalf("cancelled command without exit code is not an error: %#v", trace.Events[2])
+	if trace.Events[2].OutcomeKnown || trace.Events[2].IsError {
+		t.Fatalf("cancelled command without exit code has unknown outcome: %#v", trace.Events[2])
 	}
 }
 

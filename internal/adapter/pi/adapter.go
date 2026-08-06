@@ -233,9 +233,11 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 					continue
 				}
 				delete(pending, msg.ToolCallID)
+				isError := msg.IsError != nil && *msg.IsError
 				trace.Events = append(trace.Events, adapter.BuildEvent(trace, call, adapter.ToolResult{
-					Content: contentText(msg.Content),
-					IsError: msg.IsError,
+					Content:      contentText(msg.Content),
+					IsError:      isError,
+					OutcomeKnown: msg.IsError != nil,
 				}))
 			case "bashExecution":
 				// A `!` command the user ran from the TUI still touches the
@@ -246,8 +248,9 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 					Timestamp: entry.Timestamp,
 				}
 				trace.Events = append(trace.Events, adapter.BuildEvent(trace, call, adapter.ToolResult{
-					Content: msg.Output,
-					IsError: msg.ExitCode != nil && *msg.ExitCode != 0,
+					Content:      msg.Output,
+					IsError:      msg.ExitCode != nil && *msg.ExitCode != 0,
+					OutcomeKnown: msg.ExitCode != nil,
 				}))
 			}
 		}
@@ -323,7 +326,7 @@ type piMessage struct {
 	Content    json.RawMessage `json:"content"`
 	Model      string          `json:"model"`
 	ToolCallID string          `json:"toolCallId"`
-	IsError    bool            `json:"isError"`
+	IsError    *bool           `json:"isError"`
 	Command    string          `json:"command"`
 	Output     string          `json:"output"`
 	ExitCode   *int            `json:"exitCode"`
