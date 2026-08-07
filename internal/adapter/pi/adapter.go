@@ -103,8 +103,8 @@ func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 				meta.Model = entry.ModelID
 			}
 		case "message":
-			var msg piMessage
-			if json.Unmarshal(entry.Message, &msg) != nil {
+			msg, err := decodePiMessage(entry.Message)
+			if err != nil {
 				continue
 			}
 			switch msg.Role {
@@ -191,8 +191,8 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 			// it as a user turn in ComputeStats, so it is dropped the same
 			// way injected user messages are.
 		case "message":
-			var msg piMessage
-			if json.Unmarshal(entry.Message, &msg) != nil {
+			msg, err := decodePiMessage(entry.Message)
+			if err != nil {
 				continue
 			}
 			switch msg.Role {
@@ -330,6 +330,34 @@ type piMessage struct {
 	Command    string          `json:"command"`
 	Output     string          `json:"output"`
 	ExitCode   *int            `json:"exitCode"`
+}
+
+func decodePiMessage(data json.RawMessage) (piMessage, error) {
+	var msg piMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return piMessage{}, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return piMessage{}, err
+	}
+	msg.IsError = nil
+	if raw, ok := fields["isError"]; ok && strings.TrimSpace(string(raw)) != "null" {
+		var value bool
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return piMessage{}, err
+		}
+		msg.IsError = &value
+	}
+	msg.ExitCode = nil
+	if raw, ok := fields["exitCode"]; ok && strings.TrimSpace(string(raw)) != "null" {
+		var value int
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return piMessage{}, err
+		}
+		msg.ExitCode = &value
+	}
+	return msg, nil
 }
 
 type contentBlock struct {

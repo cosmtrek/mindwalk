@@ -95,15 +95,15 @@ func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
 	session := filepath.Join(t.TempDir(), "outcome-certainty.jsonl")
 	writeSession(t, session,
 		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"user","content":"x"}}`,
-		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"assistant","content":[{"type":"tool_use","id":"success","name":"Bash","input":{"command":"go test ./..."}},{"type":"tool_use","id":"failure","name":"Bash","input":{"command":"make test"}},{"type":"tool_use","id":"unknown","name":"Bash","input":{"command":"npm test"}}]}}`,
-		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"user","content":[{"tool_use_id":"success","type":"tool_result","content":"ok","is_error":false},{"tool_use_id":"failure","type":"tool_result","content":"failed","is_error":true},{"tool_use_id":"unknown","type":"tool_result","content":"incomplete"}]}}`,
+		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"assistant","content":[{"type":"tool_use","id":"explicit-success","name":"Bash","input":{"command":"go test ./..."}},{"type":"tool_use","id":"failure","name":"Bash","input":{"command":"make test"}},{"type":"tool_use","id":"implicit-success","name":"Bash","input":{"command":"npm test"}},{"type":"tool_use","id":"wrong-case","name":"Bash","input":{"command":"go test ./internal/..."}},{"type":"tool_use","id":"pending","name":"Bash","input":{"command":"go vet ./..."}}]}}`,
+		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","cwd":"/tmp","sessionId":"outcome-certainty","message":{"role":"user","content":[{"tool_use_id":"explicit-success","type":"tool_result","content":"ok","is_error":false},{"tool_use_id":"failure","type":"tool_result","content":"failed","is_error":true},{"tool_use_id":"implicit-success","type":"tool_result","content":"ok"},{"tool_use_id":"wrong-case","type":"tool_result","content":"ok","IS_ERROR":true}]}}`,
 	)
 
 	trace, err := (Adapter{}).Parse(session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trace.Events) != 3 {
+	if len(trace.Events) != 5 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
 	if got := trace.Events[0]; !got.OutcomeKnown || got.IsError {
@@ -112,8 +112,17 @@ func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
 	if got := trace.Events[1]; !got.OutcomeKnown || !got.IsError {
 		t.Fatalf("failure event = %#v", got)
 	}
-	if got := trace.Events[2]; got.OutcomeKnown || got.IsError {
-		t.Fatalf("unknown event = %#v", got)
+	if got := trace.Events[2]; !got.OutcomeKnown || got.IsError {
+		t.Fatalf("implicit success event = %#v", got)
+	}
+	if got := trace.Events[3]; !got.OutcomeKnown || got.IsError {
+		t.Fatalf("wrong-case error key event = %#v", got)
+	}
+	if got := trace.Events[4]; got.OutcomeKnown || got.IsError {
+		t.Fatalf("pending event = %#v", got)
+	}
+	if trace.Stats.Observability.Errors != "estimated" {
+		t.Fatalf("observability = %#v", trace.Stats.Observability)
 	}
 }
 

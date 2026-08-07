@@ -83,17 +83,18 @@ func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
 	root := t.TempDir()
 	path := writeSession(t,
 		header(root),
-		`{"type":"message","id":"a1","parentId":null,"timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"success","name":"read","arguments":{"path":"ok.go"}},{"type":"toolCall","id":"failure","name":"edit","arguments":{"path":"bad.go"}},{"type":"toolCall","id":"unknown","name":"bash","arguments":{"command":"sleep 100"}}],"stopReason":"toolUse"}}`,
+		`{"type":"message","id":"a1","parentId":null,"timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"success","name":"read","arguments":{"path":"ok.go"}},{"type":"toolCall","id":"failure","name":"edit","arguments":{"path":"bad.go"}},{"type":"toolCall","id":"unknown","name":"bash","arguments":{"command":"sleep 100"}},{"type":"toolCall","id":"wrong-case","name":"edit","arguments":{"path":"case.go"}}],"stopReason":"toolUse"}}`,
 		`{"type":"message","id":"r1","parentId":"a1","timestamp":"2026-07-21T14:35:02.000Z","message":{"role":"toolResult","toolCallId":"success","toolName":"read","content":[{"type":"text","text":"ok"}],"isError":false}}`,
 		`{"type":"message","id":"r2","parentId":"r1","timestamp":"2026-07-21T14:35:03.000Z","message":{"role":"toolResult","toolCallId":"failure","toolName":"edit","content":[{"type":"text","text":"failed"}],"isError":true}}`,
 		`{"type":"message","id":"r3","parentId":"r2","timestamp":"2026-07-21T14:35:04.000Z","message":{"role":"toolResult","toolCallId":"unknown","toolName":"bash","content":[{"type":"text","text":"still running"}]}}`,
+		`{"type":"message","id":"r4","parentId":"r3","timestamp":"2026-07-21T14:35:05.000Z","message":{"role":"toolResult","toolCallId":"wrong-case","toolName":"edit","content":[{"type":"text","text":"ok"}],"IsError":true}}`,
 	)
 
 	trace, err := (Adapter{}).Parse(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trace.Events) != 3 {
+	if len(trace.Events) != 4 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
 	if got := trace.Events[0]; !got.OutcomeKnown || got.IsError {
@@ -104,6 +105,12 @@ func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
 	}
 	if got := trace.Events[2]; got.OutcomeKnown || got.IsError {
 		t.Fatalf("unknown event = %#v", got)
+	}
+	if got := trace.Events[3]; got.OutcomeKnown || got.IsError {
+		t.Fatalf("wrong-case error key event = %#v", got)
+	}
+	if trace.Stats.Observability.Errors != "estimated" {
+		t.Fatalf("observability = %#v", trace.Stats.Observability)
 	}
 }
 
@@ -206,13 +213,14 @@ func TestParseBashExecution(t *testing.T) {
 		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","message":{"role":"bashExecution","command":"npm run build","output":"boom","exitCode":1,"cancelled":false,"truncated":false,"timestamp":1}}`,
 		`{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-07-21T14:35:10.000Z","message":{"role":"bashExecution","command":"go test ./...","output":"ok","exitCode":0,"cancelled":false,"truncated":false,"timestamp":2}}`,
 		`{"type":"message","id":"e3","parentId":"e2","timestamp":"2026-07-21T14:35:20.000Z","message":{"role":"bashExecution","command":"sleep 100","output":"","cancelled":true,"truncated":false,"timestamp":3}}`,
+		`{"type":"message","id":"e4","parentId":"e3","timestamp":"2026-07-21T14:35:30.000Z","message":{"role":"bashExecution","command":"false","output":"boom","ExitCode":1,"cancelled":false,"truncated":false,"timestamp":4}}`,
 	)
 
 	trace, err := Adapter{}.Parse(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trace.Events) != 3 {
+	if len(trace.Events) != 4 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
 	if trace.Events[0].Tool != "bash" || !trace.Events[0].OutcomeKnown || !trace.Events[0].IsError {
@@ -223,6 +231,9 @@ func TestParseBashExecution(t *testing.T) {
 	}
 	if trace.Events[2].OutcomeKnown || trace.Events[2].IsError {
 		t.Fatalf("cancelled command without exit code has unknown outcome: %#v", trace.Events[2])
+	}
+	if trace.Events[3].OutcomeKnown || trace.Events[3].IsError {
+		t.Fatalf("wrong-case exit code has unknown outcome: %#v", trace.Events[3])
 	}
 }
 

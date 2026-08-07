@@ -275,12 +275,14 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 				return
 			}
 			if callID, result, ok := decodeOutput(payload); ok {
-				if _, exists := calls[callID]; !exists {
+				call, exists := calls[callID]
+				if !exists {
 					return
 				}
 				if _, exists := results[callID]; exists {
 					return
 				}
+				result.IsError, result.OutcomeKnown = toolOutputStatus(call.Name, result.Content)
 				results[callID] = result
 				return
 			}
@@ -317,6 +319,7 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 			if json.Unmarshal(line.Payload, &payload) != nil {
 				return
 			}
+			payload.Success = exactBoolPointer(line.Payload, "success")
 			if payload.Type == "context_compacted" {
 				trace.Marks = append(trace.Marks, model.Mark{Seq: len(callOrder), Type: "compaction"})
 				return
@@ -636,11 +639,8 @@ func decodeOutput(payload responseItemPayload) (string, adapter.ToolResult, bool
 		return "", adapter.ToolResult{}, false
 	}
 	output := adapter.ContentToString(payload.Output)
-	failed, known := commandOutputStatus(output)
 	return payload.CallID, adapter.ToolResult{
-		Content:      output,
-		IsError:      failed,
-		OutcomeKnown: known,
+		Content: output,
 	}, true
 }
 
@@ -724,38 +724,41 @@ var exitCodeRe = regexp.MustCompile(`(?im)^(?:Process exited with code|Exit code
 
 func commandOutputStatus(output string) (failed bool, known bool) {
 	trimmed := strings.TrimSpace(output)
-	var envelope struct {
-		ExitCode *int  `json:"exit_code"`
-		TimedOut *bool `json:"timed_out"`
-		Metadata struct {
-			ExitCode *int `json:"exit_code"`
-		} `json:"metadata"`
-	}
+	var envelope map[string]json.RawMessage
 	if json.Unmarshal([]byte(trimmed), &envelope) == nil {
-		if envelope.ExitCode != nil {
-			return *envelope.ExitCode != 0, true
+		if _, ok := exactString(envelope, "output"); ok {
+			if exitCode, ok := exactInt(envelope, "exit_code"); ok {
+				return exitCode != 0, true
+			}
+			if raw, ok := envelope["metadata"]; ok {
+				var metadata map[string]json.RawMessage
+				if json.Unmarshal(raw, &metadata) == nil {
+					if exitCode, ok := exactInt(metadata, "exit_code"); ok {
+						return exitCode != 0, true
+					}
+				}
+			}
 		}
-		if envelope.Metadata.ExitCode != nil {
-			return *envelope.Metadata.ExitCode != 0, true
+		if _, ok := exactString(envelope, "message"); ok {
+			if timedOut, ok := exactBool(envelope, "timed_out"); ok && timedOut {
+				return true, true
+			}
 		}
-		if envelope.TimedOut != nil && *envelope.TimedOut {
-			return true, true
-		}
-	}
-	if strings.HasPrefix(strings.ToLower(trimmed), "apply_patch verification failed") {
-		return true, true
 	}
 	firstLine := trimmed
 	if newline := strings.IndexByte(firstLine, '\n'); newline >= 0 {
 		firstLine = firstLine[:newline]
 	}
 	status := strings.ToLower(strings.TrimSpace(firstLine))
-	switch {
-	case strings.HasPrefix(status, "script completed"):
+	if strings.HasPrefix(status, "script running with cell id ") {
+		return false, false
+	}
+	switch status {
+	case "script completed":
 		return false, true
-	case strings.HasPrefix(status, "script failed"):
+	case "script failed":
 		return true, true
-	case strings.HasPrefix(status, "script running"):
+	case "script running":
 		return false, false
 	}
 	header := trimmed
@@ -774,6 +777,66 @@ func commandOutputStatus(output string) (failed bool, known bool) {
 		return match[1] != "0", true
 	}
 	return false, false
+}
+
+func toolOutputStatus(tool, output string) (failed bool, known bool) {
+	switch tool {
+	case "exec", "exec_command", "write_stdin", "wait":
+		return commandOutputStatus(output)
+	case "apply_patch":
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(output)), "apply_patch verification failed") {
+			return true, true
+		}
+	}
+	return false, false
+}
+
+func exactBoolPointer(data json.RawMessage, key string) *bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return nil
+	}
+	value, ok := exactBool(fields, key)
+	if !ok {
+		return nil
+	}
+	return &value
+}
+
+func exactBool(fields map[string]json.RawMessage, key string) (bool, bool) {
+	raw, ok := fields[key]
+	if !ok || strings.TrimSpace(string(raw)) == "null" {
+		return false, false
+	}
+	var value bool
+	if json.Unmarshal(raw, &value) != nil {
+		return false, false
+	}
+	return value, true
+}
+
+func exactInt(fields map[string]json.RawMessage, key string) (int, bool) {
+	raw, ok := fields[key]
+	if !ok || strings.TrimSpace(string(raw)) == "null" {
+		return 0, false
+	}
+	var value int
+	if json.Unmarshal(raw, &value) != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func exactString(fields map[string]json.RawMessage, key string) (string, bool) {
+	raw, ok := fields[key]
+	if !ok || strings.TrimSpace(string(raw)) == "null" {
+		return "", false
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return "", false
+	}
+	return value, true
 }
 
 func (a Adapter) titleFor(id string) string {

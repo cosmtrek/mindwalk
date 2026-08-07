@@ -57,9 +57,11 @@ func TestComputeStatsEditsAfterLastVerifyWithoutVerify(t *testing.T) {
 }
 
 func TestComputeStatsObservability(t *testing.T) {
-	strongRead := Event{Action: "read", Targets: []Target{{Path: "a.go", Touch: "read"}}}
-	weakRead := Event{Action: "read", Targets: []Target{{Path: "b.go", Touch: "read", Weak: true}}}
+	strongRead := Event{Action: "read", OutcomeKnown: true, Targets: []Target{{Path: "a.go", Touch: "read"}}}
+	weakRead := Event{Action: "read", OutcomeKnown: true, Targets: []Target{{Path: "b.go", Touch: "read", Weak: true}}}
 	hitOnly := Event{Action: "search", Targets: []Target{{Path: "c.go", Touch: "hit"}}}
+	pending := Event{Action: "exec"}
+	legacyFailure := Event{Action: "exec", IsError: true}
 
 	tests := []struct {
 		name        string
@@ -70,6 +72,8 @@ func TestComputeStatsObservability(t *testing.T) {
 	}{
 		{"strong reads are exact", []Event{strongRead}, ObservabilityExact, ObservabilityExact, ObservabilityExact},
 		{"any weak read downgrades", []Event{strongRead, weakRead}, ObservabilityExact, ObservabilityEstimated, ObservabilityExact},
+		{"unknown outcome downgrades exact errors", []Event{strongRead, pending}, ObservabilityExact, ObservabilityExact, ObservabilityEstimated},
+		{"legacy failure remains known", []Event{legacyFailure}, ObservabilityExact, ObservabilityUnavailable, ObservabilityExact},
 		{"no reads is unavailable", []Event{hitOnly}, ObservabilityEstimated, ObservabilityUnavailable, ObservabilityEstimated},
 		{"empty error signal falls back to estimated", []Event{strongRead}, "", ObservabilityExact, ObservabilityEstimated},
 	}

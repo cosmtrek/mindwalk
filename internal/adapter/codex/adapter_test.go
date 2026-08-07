@@ -417,22 +417,78 @@ func TestCommandOutputStatus(t *testing.T) {
 		{output: `{"output":"ok","metadata":{"exit_code":0}}`, wantKnown: true},
 		{output: `{"output":"failed","metadata":{"exit_code":1}}`, wantFailed: true, wantKnown: true},
 		{output: `{"output":"failed","exit_code":3}`, wantFailed: true, wantKnown: true},
+		{output: `{"exit_code":3}`},
+		{output: `{"output":"failed","Exit_Code":3}`},
+		{output: `{"output":"failed","metadata":{"Exit_Code":1}}`},
 		{output: `{"output":"Exit code: 1","metadata":{"exit_code":0}}`, wantKnown: true},
 		{output: "Script completed\nWall time 0.1 seconds\nOutput:\nExit code: 1", wantKnown: true},
 		{output: "Script running with cell ID 28\nExit code: 1"},
 		{output: "Script failed\nExit code: 0", wantFailed: true, wantKnown: true},
 		{output: "plain output"},
 		{output: `{"message":"Wait timed out after 20000ms","timed_out":true}`, wantFailed: true, wantKnown: true},
+		{output: `{"message":"Wait timed out after 20000ms","Timed_Out":true}`},
 		{output: `{"message":"still running","timed_out":false}`},
-		{output: "apply_patch verification failed: Failed to find expected lines in a.go", wantFailed: true, wantKnown: true},
+		{output: "apply_patch verification failed: Failed to find expected lines in a.go"},
 		{output: "Wall time: 8.9 seconds\naborted by user", wantFailed: true, wantKnown: true},
 		{output: "Wall time: 8.9 seconds\nOutput:\naborted by user"},
+		{output: "Script completedly\nWall time 0.1 seconds"},
 	}
 	for _, tt := range tests {
 		failed, known := commandOutputStatus(tt.output)
 		if failed != tt.wantFailed || known != tt.wantKnown {
 			t.Errorf("commandOutputStatus(%q) = (%v, %v), want (%v, %v)", tt.output, failed, known, tt.wantFailed, tt.wantKnown)
 		}
+	}
+}
+
+func TestParseCodexScopesOutcomeInferenceAndMatchesExactKeys(t *testing.T) {
+	session := filepath.Join(t.TempDir(), "outcome-scope.jsonl")
+	writeJSONL(t, session,
+		map[string]any{
+			"timestamp": "2026-07-10T00:00:00Z",
+			"type":      "session_meta",
+			"payload":   map[string]any{"id": "outcome-scope", "cwd": filepath.ToSlash(t.TempDir())},
+		},
+		customCall("2026-07-10T00:00:01Z", "ctc-script", "call-script", "view_image", map[string]any{"path": "image.png"}),
+		customOutput("2026-07-10T00:00:02Z", "call-script", "Script completed\nWall time 0.1 seconds"),
+		customCall("2026-07-10T00:00:03Z", "ctc-json", "call-json", "view_image", map[string]any{"path": "image.png"}),
+		customOutput("2026-07-10T00:00:04Z", "call-json", `{"output":"failed","exit_code":1}`),
+		call("2026-07-10T00:00:05Z", "fc-wrong", "call-wrong", "exec_command", map[string]any{"cmd": "false"}),
+		output("2026-07-10T00:00:06Z", "call-wrong", `{"output":"failed","Exit_Code":1}`),
+		customCall("2026-07-10T00:00:07Z", "ctc-exact", "call-exact", "exec", `text(await tools.exec_command({cmd: "false"}))`),
+		customOutput("2026-07-10T00:00:08Z", "call-exact", `{"output":"failed","exit_code":1}`),
+		customCall("2026-07-10T00:00:09Z", "ctc-patch", "call-patch", "apply_patch", "*** Begin Patch\n*** Add File: added.go\n*** End Patch\n"),
+		customOutput("2026-07-10T00:00:10Z", "call-patch", "plain output"),
+		map[string]any{
+			"timestamp": "2026-07-10T00:00:11Z",
+			"type":      "event_msg",
+			"payload": map[string]any{
+				"type":    "patch_apply_end",
+				"call_id": "call-patch",
+				"Success": true,
+			},
+		},
+		customCall("2026-07-10T00:00:12Z", "ctc-patch-fail", "call-patch-fail", "apply_patch", "*** Begin Patch\n*** Update File: missing.go\n*** End Patch\n"),
+		customOutput("2026-07-10T00:00:13Z", "call-patch-fail", "apply_patch verification failed: missing.go"),
+	)
+
+	trace, err := (Adapter{}).Parse(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trace.Events) != 6 {
+		t.Fatalf("events = %#v", trace.Events)
+	}
+	for _, index := range []int{0, 1, 2, 4} {
+		if got := trace.Events[index]; got.OutcomeKnown || got.IsError {
+			t.Fatalf("event %d promoted to known outcome: %#v", index, got)
+		}
+	}
+	if got := trace.Events[3]; !got.OutcomeKnown || !got.IsError {
+		t.Fatalf("exact command envelope = %#v", got)
+	}
+	if got := trace.Events[5]; !got.OutcomeKnown || !got.IsError {
+		t.Fatalf("apply_patch failure = %#v", got)
 	}
 }
 

@@ -243,14 +243,14 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 					continue
 				}
 				delete(pending, item.ToolUseID)
-				event := buildEvent(trace, call, item)
+				event := buildEvent(trace, call, item, true)
 				trace.Events = append(trace.Events, event)
 			}
 		}
 	})
 	for _, id := range pendingOrder {
 		if call, ok := pending[id]; ok {
-			trace.Events = append(trace.Events, buildEvent(trace, call, contentItem{}))
+			trace.Events = append(trace.Events, buildEvent(trace, call, contentItem{}, false))
 		}
 	}
 	sort.Slice(trace.Events, func(i, j int) bool {
@@ -307,6 +307,22 @@ func (c *contentList) UnmarshalJSON(data []byte) error {
 	var items []contentItem
 	if err := json.Unmarshal(data, &items); err != nil {
 		return err
+	}
+	var rawItems []map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawItems); err != nil {
+		return err
+	}
+	for i := range items {
+		items[i].IsError = nil
+		raw, ok := rawItems[i]["is_error"]
+		if !ok || strings.TrimSpace(string(raw)) == "null" {
+			continue
+		}
+		var value bool
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		items[i].IsError = &value
 	}
 	c.Items = items
 	return nil
@@ -389,11 +405,11 @@ func isClaudeLine(line rawLine) bool {
 	}
 }
 
-func buildEvent(trace *model.Trace, call adapter.ToolCall, result contentItem) model.Event {
+func buildEvent(trace *model.Trace, call adapter.ToolCall, result contentItem, resultObserved bool) model.Event {
 	isError := result.IsError != nil && *result.IsError
 	return adapter.BuildEvent(trace, call, adapter.ToolResult{
 		Content:      adapter.ContentToString(result.Content),
 		IsError:      isError,
-		OutcomeKnown: result.IsError != nil,
+		OutcomeKnown: resultObserved,
 	})
 }
