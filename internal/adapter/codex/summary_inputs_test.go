@@ -8,6 +8,7 @@ import (
 func TestSummaryInputsDeclaresTitleIndex(t *testing.T) {
 	a := Adapter{Dir: filepath.Join("root", "sessions")}
 	inputs := a.SummaryInputs("any.jsonl")
+
 	want := filepath.Join("root", "session_index.jsonl")
 	if len(inputs) == 0 || inputs[0] != want {
 		t.Fatalf("SummaryInputs = %v, want first candidate %s", inputs, want)

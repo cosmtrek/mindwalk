@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cosmtrek/mindwalk/internal/judge"
@@ -16,6 +17,7 @@ func TestParseCodexSession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	dir := t.TempDir()
 	session := filepath.Join(dir, "rollout-2026-07-09T00-00-00-codex-demo.jsonl")
 	index := filepath.Join(dir, "session_index.jsonl")
@@ -24,7 +26,9 @@ func TestParseCodexSession(t *testing.T) {
 		"thread_name": "Codex demo trace",
 		"updated_at":  "2026-07-09T00:00:09Z",
 	})
-	writeJSONL(t, session,
+	writeJSONL(
+		t,
+		session,
 		map[string]any{
 			"timestamp": "2026-07-09T00:00:00Z",
 			"type":      "session_meta",
@@ -61,23 +65,36 @@ func TestParseCodexSession(t *testing.T) {
 			"workdir": filepath.ToSlash(root),
 		}),
 		output("2026-07-09T00:00:04Z", "call-read", "Chunk ID: read\nProcess exited with code 0\nOutput:\n# Demo\n"),
-		callRaw("2026-07-09T00:00:05Z", "fc-edit", "call-edit", "apply_patch", "*** Begin Patch\n*** Update File: README.md\n@@\n-# Demo\n+# Demo updated\n*** End Patch\n"),
+		callRaw(
+			"2026-07-09T00:00:05Z",
+			"fc-edit",
+			"call-edit",
+			"apply_patch",
+			"*** Begin Patch\n*** Update File: README.md\n@@\n-# Demo\n+# Demo updated\n*** End Patch\n",
+		),
 		output("2026-07-09T00:00:06Z", "call-edit", "Success. Updated the following files:\nM README.md\n"),
 		call("2026-07-09T00:00:07Z", "fc-test", "call-test", "exec_command", map[string]any{
 			"cmd":     "go test ./...",
 			"workdir": filepath.ToSlash(root),
 		}),
-		output("2026-07-09T00:00:08Z", "call-test", "Chunk ID: test\nProcess exited with code 1\nOutput:\nFAIL ./...\n"),
+		output(
+			"2026-07-09T00:00:08Z",
+			"call-test",
+			"Chunk ID: test\nProcess exited with code 1\nOutput:\nFAIL ./...\n",
+		),
 	)
 
 	adapter := Adapter{Dir: dir, IndexPath: index}
+
 	meta, err := adapter.Summarize(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if meta.ID != "codex-demo" || meta.Harness != "codex" || meta.Title != "Codex demo trace" {
 		t.Fatalf("meta = %#v", meta)
 	}
+
 	if meta.Model != "gpt-5.5" || meta.GitBranch != "main" || meta.EventCount != 3 {
 		t.Fatalf("meta = %#v", meta)
 	}
@@ -86,30 +103,42 @@ func TestParseCodexSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if trace.Session.ID != "codex-demo" || trace.Session.Harness != "codex" || trace.Session.Commit != "abc123" {
 		t.Fatalf("session = %#v", trace.Session)
 	}
+
 	if trace.Session.Title != "Codex demo trace" || trace.Session.Model != "gpt-5.5" {
 		t.Fatalf("session = %#v", trace.Session)
 	}
+
 	if len(trace.Marks) != 1 || trace.Marks[0].Type != "user-message" || trace.Marks[0].Note != "inspect" {
 		t.Fatalf("marks = %#v", trace.Marks)
 	}
+
 	if len(trace.Events) != 3 {
 		t.Fatalf("events = %d", len(trace.Events))
 	}
-	if got := trace.Events[0]; got.Tool != "exec_command" || got.Action != "read" || len(got.Targets) != 1 || got.Targets[0].Path != "README.md" || got.Targets[0].Touch != "read" {
+
+	if got := trace.Events[0]; got.Tool != "exec_command" || got.Action != "read" || len(got.Targets) != 1 ||
+		got.Targets[0].Path != "README.md" ||
+		got.Targets[0].Touch != "read" {
 		t.Fatalf("read event = %#v", got)
 	}
+
 	if got := trace.Events[1]; got.Tool != "apply_patch" || got.Action != "edit" || got.Targets[0].Touch != "edit" {
 		t.Fatalf("edit event = %#v", got)
 	}
+
 	if got := trace.Events[2]; got.Action != "verify" || !got.IsError {
 		t.Fatalf("verify event = %#v", got)
 	}
-	if trace.Stats.Edited != 1 || trace.Stats.EventsBeforeFirstEdit != 1 || math.Abs(trace.Stats.ErrorRate-1.0/3.0) > 0.0001 {
+
+	if trace.Stats.Edited != 1 || trace.Stats.EventsBeforeFirstEdit != 1 ||
+		math.Abs(trace.Stats.ErrorRate-1.0/3.0) > 0.0001 {
 		t.Fatalf("stats = %#v", trace.Stats)
 	}
+
 	want := model.Observability{Reads: model.ObservabilityEstimated, Errors: model.ObservabilityEstimated}
 	if trace.Stats.Observability != want {
 		t.Fatalf("observability = %#v", trace.Stats.Observability)
@@ -138,9 +167,11 @@ func TestParseCodexContextCompactedBecomesCompactionMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(trace.Marks) != 1 || trace.Marks[0].Type != "compaction" || trace.Marks[0].Seq != 1 {
 		t.Fatalf("marks = %#v", trace.Marks)
 	}
+
 	if trace.Stats.Compactions != 1 {
 		t.Fatalf("compactions = %d", trace.Stats.Compactions)
 	}
@@ -168,9 +199,12 @@ func TestParseCodexSpawnAgentBecomesSubagentMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trace.Marks) != 1 || trace.Marks[0].Type != "subagent" || trace.Marks[0].Seq != 1 || trace.Marks[0].Note != "spawn_agent" {
+
+	if len(trace.Marks) != 1 || trace.Marks[0].Type != "subagent" || trace.Marks[0].Seq != 1 ||
+		trace.Marks[0].Note != "spawn_agent" {
 		t.Fatalf("marks = %#v", trace.Marks)
 	}
+
 	if trace.Stats.Subagents != 1 {
 		t.Fatalf("subagents = %d", trace.Stats.Subagents)
 	}
@@ -180,13 +214,17 @@ func TestParseCodexCustomCallsCanonicalizesOrderAndPatchResults(t *testing.T) {
 	root := t.TempDir()
 	readme := filepath.Join(root, "README.md")
 	added := filepath.Join(root, "added.go")
+
 	if err := os.WriteFile(readme, []byte("# Demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	session := filepath.Join(t.TempDir(), "custom.jsonl")
 	failed := false
 	succeeded := true
-	writeJSONL(t, session,
+	writeJSONL(
+		t,
+		session,
 		map[string]any{
 			"timestamp": "2026-07-10T00:00:00Z",
 			"type":      "session_meta",
@@ -197,7 +235,13 @@ func TestParseCodexCustomCallsCanonicalizesOrderAndPatchResults(t *testing.T) {
 		},
 		userMessage("2026-07-10T00:00:01Z", "before calls"),
 		customCall("2026-07-10T00:00:02Z", "", "", "apply_patch", "*** Begin Patch\n"),
-		customCall("2026-07-10T00:00:03Z", "ctc-patch", "call-patch", "apply_patch", "*** Begin Patch\n*** Update File: README.md\n*** End Patch\n"),
+		customCall(
+			"2026-07-10T00:00:03Z",
+			"ctc-patch",
+			"call-patch",
+			"apply_patch",
+			"*** Begin Patch\n*** Update File: README.md\n*** End Patch\n",
+		),
 		userMessage("2026-07-10T00:00:04Z", "between call and output"),
 		customOutput("2026-07-10T00:00:05Z", "call-late", "orphan output"),
 		customCall("2026-07-10T00:00:06Z", "ctc-image", "call-image", "view_image", map[string]any{
@@ -228,10 +272,12 @@ func TestParseCodexCustomCallsCanonicalizesOrderAndPatchResults(t *testing.T) {
 	)
 
 	a := Adapter{}
+
 	meta, err := a.Summarize(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if meta.EventCount != 3 {
 		t.Fatalf("event count = %d, want 3", meta.EventCount)
 	}
@@ -240,28 +286,43 @@ func TestParseCodexCustomCallsCanonicalizesOrderAndPatchResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if trace.Session.EventCount != meta.EventCount || len(trace.Events) != 3 {
-		t.Fatalf("meta events = %d, trace session events = %d, events = %d", meta.EventCount, trace.Session.EventCount, len(trace.Events))
+		t.Fatalf(
+			"meta events = %d, trace session events = %d, events = %d",
+			meta.EventCount,
+			trace.Session.EventCount,
+			len(trace.Events),
+		)
 	}
+
 	if len(trace.Marks) != 3 || trace.Marks[0].Seq != 0 || trace.Marks[1].Seq != 1 || trace.Marks[2].Seq != 3 {
 		t.Fatalf("marks = %#v", trace.Marks)
 	}
+
 	patchEvent := trace.Events[0]
-	if patchEvent.Tool != "apply_patch" || patchEvent.Action != "edit" || !patchEvent.IsError || patchEvent.ResultBytes != len("first patch output") {
+	if patchEvent.Tool != "apply_patch" || patchEvent.Action != "edit" || !patchEvent.IsError ||
+		patchEvent.ResultBytes != len("first patch output") {
 		t.Fatalf("patch event = %#v", patchEvent)
 	}
-	if len(patchEvent.Targets) != 2 || patchEvent.Targets[0].Path != "README.md" || patchEvent.Targets[1].Path != "added.go" {
+
+	if len(patchEvent.Targets) != 2 || patchEvent.Targets[0].Path != "README.md" ||
+		patchEvent.Targets[1].Path != "added.go" {
 		t.Fatalf("patch targets = %#v", patchEvent.Targets)
 	}
+
 	imageEvent := trace.Events[1]
 	if imageEvent.Tool != "view_image" || imageEvent.IsError || imageEvent.ResultBytes != len("first image output") {
 		t.Fatalf("image event = %#v", imageEvent)
 	}
+
 	if len(imageEvent.Targets) != 1 || imageEvent.Targets[0].Path != "README.md" {
 		t.Fatalf("image targets = %#v", imageEvent.Targets)
 	}
+
 	lateEvent := trace.Events[2]
-	if lateEvent.Tool != "exec_command" || lateEvent.Action != "verify" || lateEvent.ResultBytes != 0 || lateEvent.IsError {
+	if lateEvent.Tool != "exec_command" || lateEvent.Action != "verify" || lateEvent.ResultBytes != 0 ||
+		lateEvent.IsError {
 		t.Fatalf("late event = %#v", lateEvent)
 	}
 }
@@ -270,7 +331,9 @@ func TestPatchApplyEndSuccessOverridesTextualFailure(t *testing.T) {
 	root := t.TempDir()
 	session := filepath.Join(t.TempDir(), "patch-success.jsonl")
 	succeeded := true
-	writeJSONL(t, session,
+	writeJSONL(
+		t,
+		session,
 		map[string]any{
 			"timestamp": "2026-07-10T00:00:00Z",
 			"type":      "session_meta",
@@ -279,7 +342,13 @@ func TestPatchApplyEndSuccessOverridesTextualFailure(t *testing.T) {
 				"cwd": filepath.ToSlash(root),
 			},
 		},
-		customCall("2026-07-10T00:00:01Z", "ctc", "call-patch", "apply_patch", "*** Begin Patch\n*** Add File: added.go\n*** End Patch\n"),
+		customCall(
+			"2026-07-10T00:00:01Z",
+			"ctc",
+			"call-patch",
+			"apply_patch",
+			"*** Begin Patch\n*** Add File: added.go\n*** End Patch\n",
+		),
 		customOutput("2026-07-10T00:00:02Z", "call-patch", "Process exited with code 1"),
 		patchApplyEnd("2026-07-10T00:00:03Z", "call-patch", &succeeded, map[string]string{
 			filepath.Join(root, "added.go"): "add",
@@ -290,6 +359,7 @@ func TestPatchApplyEndSuccessOverridesTextualFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(trace.Events) != 1 || trace.Events[0].IsError {
 		t.Fatalf("events = %#v", trace.Events)
 	}
@@ -300,9 +370,15 @@ func TestParseCodexCustomExec(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	session := filepath.Join(t.TempDir(), "custom-exec.jsonl")
-	script := `const r = await tools.exec_command({"cmd":"sed -n '1,20p' README.md","workdir":` + mustJSON(t, filepath.ToSlash(root)) + `}); text(r.output);`
-	writeJSONL(t, session,
+	script := `const r = await tools.exec_command({"cmd":"sed -n '1,20p' README.md","workdir":` + mustJSON(
+		t,
+		filepath.ToSlash(root),
+	) + `}); text(r.output);`
+	writeJSONL(
+		t,
+		session,
 		map[string]any{
 			"timestamp": "2026-07-10T00:00:00Z",
 			"type":      "session_meta",
@@ -312,25 +388,36 @@ func TestParseCodexCustomExec(t *testing.T) {
 			},
 		},
 		customCall("2026-07-10T00:00:01Z", "ctc", "call-exec", "exec", script),
-		customOutput("2026-07-10T00:00:02Z", "call-exec", []any{map[string]any{"type": "input_text", "text": "# Demo\n"}}),
+		customOutput(
+			"2026-07-10T00:00:02Z",
+			"call-exec",
+			[]any{map[string]any{"type": "input_text", "text": "# Demo\n"}},
+		),
 	)
 
 	a := Adapter{}
+
 	meta, err := a.Summarize(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	trace, err := a.Parse(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if meta.EventCount != 1 || len(trace.Events) != 1 {
 		t.Fatalf("meta=%d events=%d", meta.EventCount, len(trace.Events))
 	}
+
 	event := trace.Events[0]
-	if event.Tool != "exec" || event.Action != "read" || len(event.Targets) != 1 || event.Targets[0].Path != "README.md" || event.Targets[0].Touch != "read" {
+	if event.Tool != "exec" || event.Action != "read" || len(event.Targets) != 1 ||
+		event.Targets[0].Path != "README.md" ||
+		event.Targets[0].Touch != "read" {
 		t.Fatalf("event = %#v", event)
 	}
+
 	if want := "sed -n '1,20p' README.md -> 1 targets, 0 outside"; event.Summary != want {
 		t.Fatalf("summary = %q, want %q", event.Summary, want)
 	}
@@ -338,10 +425,12 @@ func TestParseCodexCustomExec(t *testing.T) {
 
 func TestCallIDFallsBackToResponseID(t *testing.T) {
 	root := t.TempDir()
+
 	path := filepath.Join(root, "README.md")
 	if err := os.WriteFile(path, []byte("# Demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	session := filepath.Join(t.TempDir(), "fallback-id.jsonl")
 	writeJSONL(t, session,
 		map[string]any{
@@ -357,14 +446,17 @@ func TestCallIDFallsBackToResponseID(t *testing.T) {
 	)
 
 	a := Adapter{}
+
 	meta, err := a.Summarize(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	trace, err := a.Parse(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if meta.EventCount != 1 || len(trace.Events) != 1 || trace.Events[0].ResultBytes != 2 {
 		t.Fatalf("meta=%#v events=%#v", meta, trace.Events)
 	}
@@ -372,13 +464,16 @@ func TestCallIDFallsBackToResponseID(t *testing.T) {
 
 func TestParseCodexJSRepl(t *testing.T) {
 	root := t.TempDir()
+
 	path := filepath.Join(root, "packages", "db", "src", "index.ts")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(path, []byte("export const db = {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	session := filepath.Join(t.TempDir(), "js-repl.jsonl")
 	writeJSONL(t, session,
 		map[string]any{
@@ -397,11 +492,14 @@ func TestParseCodexJSRepl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(trace.Events) != 1 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
+
 	event := trace.Events[0]
-	if event.Tool != "js_repl" || event.Action != "exec" || len(event.Targets) != 1 || event.Targets[0].Path != "packages/db/src/index.ts" {
+	if event.Tool != "js_repl" || event.Action != "exec" || len(event.Targets) != 1 ||
+		event.Targets[0].Path != "packages/db/src/index.ts" {
 		t.Fatalf("event = %#v", event)
 	}
 }
@@ -436,28 +534,55 @@ func TestCommandOutputStatus(t *testing.T) {
 	for _, tt := range tests {
 		failed, known := commandOutputStatus(tt.output)
 		if failed != tt.wantFailed || known != tt.wantKnown {
-			t.Errorf("commandOutputStatus(%q) = (%v, %v), want (%v, %v)", tt.output, failed, known, tt.wantFailed, tt.wantKnown)
+			t.Errorf(
+				"commandOutputStatus(%q) = (%v, %v), want (%v, %v)",
+				tt.output,
+				failed,
+				known,
+				tt.wantFailed,
+				tt.wantKnown,
+			)
 		}
 	}
 }
 
 func TestParseCodexScopesOutcomeInferenceAndMatchesExactKeys(t *testing.T) {
 	session := filepath.Join(t.TempDir(), "outcome-scope.jsonl")
-	writeJSONL(t, session,
+	writeJSONL(
+		t,
+		session,
 		map[string]any{
 			"timestamp": "2026-07-10T00:00:00Z",
 			"type":      "session_meta",
 			"payload":   map[string]any{"id": "outcome-scope", "cwd": filepath.ToSlash(t.TempDir())},
 		},
-		customCall("2026-07-10T00:00:01Z", "ctc-script", "call-script", "view_image", map[string]any{"path": "image.png"}),
+		customCall(
+			"2026-07-10T00:00:01Z",
+			"ctc-script",
+			"call-script",
+			"view_image",
+			map[string]any{"path": "image.png"},
+		),
 		customOutput("2026-07-10T00:00:02Z", "call-script", "Script completed\nWall time 0.1 seconds"),
 		customCall("2026-07-10T00:00:03Z", "ctc-json", "call-json", "view_image", map[string]any{"path": "image.png"}),
 		customOutput("2026-07-10T00:00:04Z", "call-json", `{"output":"failed","exit_code":1}`),
 		call("2026-07-10T00:00:05Z", "fc-wrong", "call-wrong", "exec_command", map[string]any{"cmd": "false"}),
 		output("2026-07-10T00:00:06Z", "call-wrong", `{"output":"failed","Exit_Code":1}`),
-		customCall("2026-07-10T00:00:07Z", "ctc-exact", "call-exact", "exec", `text(await tools.exec_command({cmd: "false"}))`),
+		customCall(
+			"2026-07-10T00:00:07Z",
+			"ctc-exact",
+			"call-exact",
+			"exec",
+			`text(await tools.exec_command({cmd: "false"}))`,
+		),
 		customOutput("2026-07-10T00:00:08Z", "call-exact", `{"output":"failed","exit_code":1}`),
-		customCall("2026-07-10T00:00:09Z", "ctc-patch", "call-patch", "apply_patch", "*** Begin Patch\n*** Add File: added.go\n*** End Patch\n"),
+		customCall(
+			"2026-07-10T00:00:09Z",
+			"ctc-patch",
+			"call-patch",
+			"apply_patch",
+			"*** Begin Patch\n*** Add File: added.go\n*** End Patch\n",
+		),
 		customOutput("2026-07-10T00:00:10Z", "call-patch", "plain output"),
 		map[string]any{
 			"timestamp": "2026-07-10T00:00:11Z",
@@ -468,7 +593,13 @@ func TestParseCodexScopesOutcomeInferenceAndMatchesExactKeys(t *testing.T) {
 				"Success": true,
 			},
 		},
-		customCall("2026-07-10T00:00:12Z", "ctc-patch-fail", "call-patch-fail", "apply_patch", "*** Begin Patch\n*** Update File: missing.go\n*** End Patch\n"),
+		customCall(
+			"2026-07-10T00:00:12Z",
+			"ctc-patch-fail",
+			"call-patch-fail",
+			"apply_patch",
+			"*** Begin Patch\n*** Update File: missing.go\n*** End Patch\n",
+		),
 		customOutput("2026-07-10T00:00:13Z", "call-patch-fail", "apply_patch verification failed: missing.go"),
 	)
 
@@ -476,17 +607,21 @@ func TestParseCodexScopesOutcomeInferenceAndMatchesExactKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(trace.Events) != 6 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
+
 	for _, index := range []int{0, 1, 2, 4} {
 		if got := trace.Events[index]; got.OutcomeKnown || got.IsError {
 			t.Fatalf("event %d promoted to known outcome: %#v", index, got)
 		}
 	}
+
 	if got := trace.Events[3]; !got.OutcomeKnown || !got.IsError {
 		t.Fatalf("exact command envelope = %#v", got)
 	}
+
 	if got := trace.Events[5]; !got.OutcomeKnown || !got.IsError {
 		t.Fatalf("apply_patch failure = %#v", got)
 	}
@@ -514,6 +649,7 @@ func TestListSessionsSkipsNonCodexJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(sessions) != 1 || sessions[0].ID != "codex-list" {
 		t.Fatalf("sessions = %#v", sessions)
 	}
@@ -525,6 +661,7 @@ func TestListSessionsSkipsCodexSubagents(t *testing.T) {
 	legacySession := filepath.Join(dir, "legacy.jsonl")
 	subagentSession := filepath.Join(dir, "subagent.jsonl")
 	transitionalSubagentSession := filepath.Join(dir, "transitional-subagent.jsonl")
+
 	writeJSONL(t, mainSession,
 		map[string]any{
 			"timestamp": "2026-07-10T00:00:00Z",
@@ -598,37 +735,46 @@ func TestListSessionsSkipsCodexSubagents(t *testing.T) {
 	})
 
 	adapter := Adapter{Dir: dir}
+
 	mainMeta, err := adapter.Summarize(mainSession)
 	if err != nil || mainMeta.Auxiliary {
 		t.Fatalf("main meta = %#v, err = %v", mainMeta, err)
 	}
+
 	subagentMeta, err := adapter.Summarize(subagentSession)
 	if err != nil || !subagentMeta.Auxiliary || subagentMeta.ID != "child-thread" || subagentMeta.EventCount != 1 {
 		t.Fatalf("subagent meta = %#v, err = %v", subagentMeta, err)
 	}
+
 	subagentTrace, err := adapter.Parse(subagentSession)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if subagentTrace.Session.ID != subagentMeta.ID || subagentTrace.Session.Title != subagentMeta.Title ||
 		subagentTrace.Session.EndedAt != subagentMeta.EndedAt || subagentTrace.Session.EventCount != subagentMeta.EventCount {
 		t.Fatalf("subagent summary/trace mismatch: meta=%#v trace=%#v", subagentMeta, subagentTrace.Session)
 	}
+
 	transitionalMeta, err := adapter.Summarize(transitionalSubagentSession)
 	if err != nil || !transitionalMeta.Auxiliary {
 		t.Fatalf("transitional subagent meta = %#v, err = %v", transitionalMeta, err)
 	}
+
 	sessions, err := adapter.ListSessions()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(sessions) != 2 {
 		t.Fatalf("sessions = %#v", sessions)
 	}
+
 	visible := map[string]string{}
 	for _, session := range sessions {
 		visible[session.ID] = session.Path
 	}
+
 	if visible["main-thread"] != mainSession || visible["legacy-main"] != legacySession {
 		t.Fatalf("visible sessions = %#v", visible)
 	}
@@ -660,9 +806,11 @@ func TestSummarizePopulatesSubagentMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !meta.Auxiliary || meta.Agent == nil {
 		t.Fatalf("meta = %#v", meta)
 	}
+
 	want := model.AgentSessionMeta{
 		SourceID:        "child-thread",
 		RootSessionID:   "root-thread",
@@ -683,8 +831,16 @@ func TestSessionMetaPayloadDetectsSubagentFormats(t *testing.T) {
 		want    bool
 	}{
 		{name: "thread source", payload: sessionMetaPayload{ThreadSource: "subagent"}, want: true},
-		{name: "legacy object", payload: sessionMetaPayload{Source: json.RawMessage(`{"subagent":{"thread_spawn":{}}}`)}, want: true},
-		{name: "legacy scalar", payload: sessionMetaPayload{Source: json.RawMessage(`{"subagent":"memory_consolidation"}`)}, want: true},
+		{
+			name:    "legacy object",
+			payload: sessionMetaPayload{Source: json.RawMessage(`{"subagent":{"thread_spawn":{}}}`)},
+			want:    true,
+		},
+		{
+			name:    "legacy scalar",
+			payload: sessionMetaPayload{Source: json.RawMessage(`{"subagent":"memory_consolidation"}`)},
+			want:    true,
+		},
 		{name: "null subagent", payload: sessionMetaPayload{Source: json.RawMessage(`{"subagent":null}`)}, want: false},
 		{name: "top level source", payload: sessionMetaPayload{Source: json.RawMessage(`"vscode"`)}, want: false},
 		{name: "unknown object", payload: sessionMetaPayload{Source: json.RawMessage(`{"other":"user"}`)}, want: false},
@@ -701,6 +857,7 @@ func TestSessionMetaPayloadDetectsSubagentFormats(t *testing.T) {
 
 func call(ts, id, callID, name string, args map[string]any) map[string]any {
 	b, _ := json.Marshal(args)
+
 	return callRaw(ts, id, callID, name, string(b))
 }
 
@@ -773,6 +930,7 @@ func patchApplyEnd(ts, callID string, success *bool, changes map[string]string) 
 	for path, changeType := range changes {
 		payloadChanges[path] = map[string]any{"type": changeType}
 	}
+
 	return map[string]any{
 		"timestamp": ts,
 		"type":      "event_msg",
@@ -787,24 +945,30 @@ func patchApplyEnd(ts, callID string, success *bool, changes map[string]string) 
 
 func mustJSON(t *testing.T, value any) string {
 	t.Helper()
+
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return string(encoded)
 }
 
 func writeJSONL(t *testing.T, path string, values ...any) {
 	t.Helper()
-	content := ""
+
+	var content strings.Builder
+
 	for _, value := range values {
 		b, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
-		content += string(b) + "\n"
+
+		content.WriteString(string(b) + "\n")
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+
+	if err := os.WriteFile(path, []byte(content.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -814,6 +978,7 @@ func TestSummarizeMarksJudgeWorkdirAuxiliary(t *testing.T) {
 	if workdir == "" {
 		t.Skip("no home directory available")
 	}
+
 	dir := t.TempDir()
 	session := filepath.Join(dir, "rollout-2026-07-14T00-00-00-judge-run.jsonl")
 	writeJSONL(t, session,
@@ -828,18 +993,23 @@ func TestSummarizeMarksJudgeWorkdirAuxiliary(t *testing.T) {
 			},
 		},
 	)
+
 	adapter := Adapter{Dir: dir}
+
 	meta, err := adapter.Summarize(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !meta.Auxiliary {
 		t.Fatalf("session recorded in judge workdir %s should be auxiliary", workdir)
 	}
+
 	metas, err := adapter.ListSessions()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, m := range metas {
 		if m.ID == "judge-run" {
 			t.Fatal("judge session leaked into ListSessions")
@@ -865,17 +1035,25 @@ func TestParseSkipsInjectedUserMessages(t *testing.T) {
 		map[string]any{
 			"timestamp": "2026-07-14T00:00:00Z",
 			"type":      "session_meta",
-			"payload":   map[string]any{"id": "injected", "session_id": "injected", "timestamp": "2026-07-14T00:00:00Z", "cwd": "/repo"},
+			"payload": map[string]any{
+				"id":         "injected",
+				"session_id": "injected",
+				"timestamp":  "2026-07-14T00:00:00Z",
+				"cwd":        "/repo",
+			},
 		},
 		userMessage("# AGENTS.md instructions for /repo\n\nproject rules"),
 		userMessage("<environment_context>shell: zsh</environment_context>"),
 		userMessage("the real task"),
 	)
+
 	trace, err := (Adapter{Dir: dir}).Parse(session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var notes []string
+
 	for _, mark := range trace.Marks {
 		if mark.Type == "user-message" {
 			notes = append(notes, mark.Note)
@@ -886,6 +1064,7 @@ func TestParseSkipsInjectedUserMessages(t *testing.T) {
 	if len(notes) != 1 || notes[0] != "the real task" {
 		t.Fatalf("user-message notes = %#v", notes)
 	}
+
 	if trace.Stats.UserTurns != 1 {
 		t.Fatalf("userTurns = %d, want 1", trace.Stats.UserTurns)
 	}
@@ -895,6 +1074,7 @@ func TestParseSkipsInjectedUserMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if meta.UserTurns != 1 {
 		t.Fatalf("summarized userTurns = %d, want 1", meta.UserTurns)
 	}
@@ -905,15 +1085,18 @@ func TestParseRejectsRolelessMessageLines(t *testing.T) {
 	// under "message" with no top-level role; those files are not Codex's.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
+
 	lines := `{"type":"session","version":3,"id":"s1","timestamp":"2026-07-21T14:34:07.238Z","cwd":"/tmp"}
 {"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:34:22.963Z","message":{"role":"user","content":"hi"}}
 `
 	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := (Adapter{}).Parse(path); err == nil {
 		t.Fatal("Parse claimed a roleless message file")
 	}
+
 	if _, err := (Adapter{}).Summarize(path); err == nil {
 		t.Fatal("Summarize claimed a roleless message file")
 	}

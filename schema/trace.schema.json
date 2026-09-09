@@ -13,6 +13,7 @@
         "id": { "type": "string" },
         "harness": { "type": "string" },
         "model": { "type": "string" },
+        "provider": { "type": "string" },
         "title": { "type": "string" },
         "cwd": { "type": "string" },
         "commit": { "type": "string" },
@@ -52,7 +53,8 @@
           "resultBytes": { "type": "integer", "minimum": 0 },
           "isError": { "type": "boolean" },
           "outcomeKnown": { "type": "boolean" },
-          "summary": { "type": "string" }
+          "summary": { "type": "string" },
+          "providerExecuted": { "type": "boolean" }
         },
         "additionalProperties": false
       }
@@ -64,10 +66,15 @@
         "required": ["seq", "type"],
         "properties": {
           "seq": { "type": "integer", "minimum": 0 },
-          "type": { "enum": ["compaction", "user-message", "subagent"] },
+          "type": { "enum": ["compaction", "user-message", "subagent", "thinking", "finish-reason", "model-switch"] },
           "note": {
             "type": "string",
             "description": "Free-form context for the mark: user-message marks carry the message text truncated to 2000 runes; subagent marks carry the tool name"
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Wall-clock duration in seconds from the message's created_at to finished_at; present on thinking and finish-reason marks when the harness records it"
           }
         },
         "additionalProperties": false

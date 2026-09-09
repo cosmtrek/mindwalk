@@ -24,6 +24,7 @@ const (
 	AgentLinkMethodCodexParentThreadID      = "codex-parent-thread-id"
 	AgentLinkMethodClaudeToolUseID          = "claude-tool-use-id"
 	AgentLinkMethodClaudeSubagentsDirectory = "claude-subagents-directory"
+	AgentLinkMethodCrushAgentID             = "crush-agent-id"
 	AgentLinkMethodUnavailable              = "unavailable"
 )
 
