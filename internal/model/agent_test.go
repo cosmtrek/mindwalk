@@ -23,13 +23,16 @@ func TestAgentNodeOmitsMainRelationshipFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var got map[string]any
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, ok := got["parentId"]; ok {
 		t.Fatalf("main node serialized parentId: %s", data)
 	}
+
 	if _, ok := got["launchSeq"]; ok {
 		t.Fatalf("main node serialized launchSeq: %s", data)
 	}
@@ -54,10 +57,12 @@ func TestAgentNodeSerializesZeroLaunchSeq(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var got map[string]any
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
+
 	if got["launchSeq"] != float64(0) {
 		t.Fatalf("launchSeq = %#v, JSON = %s", got["launchSeq"], data)
 	}

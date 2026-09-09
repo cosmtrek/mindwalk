@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,19 +23,11 @@ type Adapter struct {
 }
 
 func DefaultDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".codex", "sessions")
+	return adapter.HomePath(".codex", "sessions")
 }
 
 func DefaultIndexPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".codex", "session_index.jsonl")
+	return adapter.HomePath(".codex", "session_index.jsonl")
 }
 
 func (a Adapter) Harness() string {
@@ -50,7 +43,7 @@ func (a Adapter) SessionDir() string {
 
 func (a Adapter) ListSessions() ([]model.SessionMeta, error) {
 	dir := a.SessionDir()
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	if !adapter.ReadableDir(dir) {
 		return nil, nil
 	}
 	var metas []model.SessionMeta
@@ -89,22 +82,25 @@ func (a Adapter) SummaryInputs(_ string) []string {
 	if a.IndexPath != "" {
 		return []string{a.IndexPath}
 	}
+
 	var inputs []string
 	if dir := filepath.Clean(a.SessionDir()); dir != "" && dir != "." {
 		inputs = append(inputs, filepath.Join(filepath.Dir(dir), "session_index.jsonl"))
 	}
+
 	if candidate := DefaultIndexPath(); candidate != "" && (len(inputs) == 0 || inputs[0] != candidate) {
 		inputs = append(inputs, candidate)
 	}
+
 	return inputs
 }
 
 func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
-	f, err := os.Open(path)
+	f, closeFile, err := adapter.OpenFile(path)
 	if err != nil {
 		return model.SessionMeta{}, err
 	}
-	defer f.Close()
+	defer closeFile()
 
 	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	meta := model.SessionMeta{Key: adapter.SessionKey(a.Harness(), path), ID: id, Harness: a.Harness(), Path: path}
@@ -149,7 +145,8 @@ func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 			recognized = true
 			var payload responseItemHeader
 			if json.Unmarshal(line.Payload, &payload) == nil {
-				if callID, ok := canonicalCallID(payload.Type, payload.ID, payload.CallID, payload.Name); ok && !seenCalls[callID] {
+				if callID, ok := canonicalCallID(payload.Type, payload.ID, payload.CallID, payload.Name); ok &&
+					!seenCalls[callID] {
 					seenCalls[callID] = true
 					meta.EventCount++
 				}
@@ -195,21 +192,19 @@ func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 	if meta.Title == "" {
 		meta.Title = a.titleFor(meta.ID)
 	}
-	if meta.Title == "" {
-		meta.Title = filepath.Base(path)
-	}
+	adapter.FallbackSessionTitle(&meta, path)
 	if !recognized {
-		return model.SessionMeta{}, fmt.Errorf("not a Codex session: %s", path)
+		return model.SessionMeta{}, adapter.NotRecognizedErr(a.Harness(), path)
 	}
 	return meta, err
 }
 
 func (a Adapter) Parse(path string) (*model.Trace, error) {
-	f, err := os.Open(path)
+	f, closeFile, err := adapter.OpenFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer closeFile()
 
 	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	trace := &model.Trace{
@@ -267,7 +262,10 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 					return
 				}
 				if call.Name == "spawn_agent" {
-					trace.Marks = append(trace.Marks, model.Mark{Seq: len(callOrder), Type: "subagent", Note: call.Name})
+					trace.Marks = append(
+						trace.Marks,
+						model.Mark{Seq: len(callOrder), Type: "subagent", Note: call.Name},
+					)
 				}
 				calls[call.ID] = call
 				callOrder = append(callOrder, call.ID)
@@ -282,6 +280,7 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 				if _, exists := results[callID]; exists {
 					return
 				}
+
 				result.IsError, result.OutcomeKnown = toolOutputStatus(call.Name, result.Content)
 				results[callID] = result
 				return
@@ -319,6 +318,7 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 			if json.Unmarshal(line.Payload, &payload) != nil {
 				return
 			}
+
 			payload.Success = exactBoolPointer(line.Payload, "success")
 			if payload.Type == "context_compacted" {
 				trace.Marks = append(trace.Marks, model.Mark{Seq: len(callOrder), Type: "compaction"})
@@ -358,16 +358,14 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 	if trace.Session.Title == "" {
 		trace.Session.Title = a.titleFor(trace.Session.ID)
 	}
-	if trace.Session.Title == "" {
-		trace.Session.Title = filepath.Base(path)
-	}
+	adapter.FallbackTraceSessionTitle(trace, path)
 	trace.Session.EventCount = len(trace.Events)
 	// Codex logs carry no structural error flag; failures are inferred from
 	// output text, and inner commands of the js exec runner surface only what
 	// the script chooses to print.
-	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilityEstimated)
+	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilitySignals{Errors: model.ObservabilityEstimated})
 	if !recognized {
-		return nil, fmt.Errorf("not a Codex session: %s", path)
+		return nil, adapter.NotRecognizedErr(a.Harness(), path)
 	}
 	return trace, err
 }
@@ -645,42 +643,10 @@ func decodeOutput(payload responseItemPayload) (string, adapter.ToolResult, bool
 }
 
 func parseInput(raw json.RawMessage) map[string]any {
-	input := map[string]any{}
 	if len(raw) == 0 || string(raw) == "null" {
-		return input
+		return map[string]any{}
 	}
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
-		input["_raw"] = string(raw)
-		return input
-	}
-	switch value := value.(type) {
-	case map[string]any:
-		return value
-	case string:
-		return parseInputText(value)
-	default:
-		encoded, _ := json.Marshal(value)
-		input["_raw"] = string(encoded)
-		return input
-	}
-}
-
-func parseInputText(text string) map[string]any {
-	input := map[string]any{}
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return input
-	}
-	if json.Unmarshal([]byte(trimmed), &input) == nil {
-		return input
-	}
-	var nested string
-	if json.Unmarshal([]byte(trimmed), &nested) == nil && nested != text {
-		return parseInputText(nested)
-	}
-	input["_raw"] = text
-	return input
+	return adapter.ParseJSONInput(string(raw))
 }
 
 func applyPatchChanges(input map[string]any, changes map[string]patchApplyChange) map[string]any {
@@ -688,9 +654,7 @@ func applyPatchChanges(input map[string]any, changes map[string]patchApplyChange
 		return input
 	}
 	merged := make(map[string]any, len(input)+1)
-	for key, value := range input {
-		merged[key] = value
-	}
+	maps.Copy(merged, input)
 	patch := ""
 	for _, key := range []string{"patch", "input", "_raw"} {
 		if value, ok := input[key].(string); ok {
@@ -706,6 +670,9 @@ func applyPatchChanges(input map[string]any, changes map[string]patchApplyChange
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
+
+	var patchSb645 strings.Builder
+
 	for _, path := range paths {
 		operation := "Update"
 		switch strings.ToLower(changes[path].Type) {
@@ -714,8 +681,12 @@ func applyPatchChanges(input map[string]any, changes map[string]patchApplyChange
 		case "delete":
 			operation = "Delete"
 		}
-		patch += fmt.Sprintf("*** %s File: %s\n", operation, path)
+
+		fmt.Fprintf(&patchSb645, "*** %s File: %s\n", operation, path)
 	}
+
+	patch += patchSb645.String()
+
 	merged["patch"] = patch
 	return merged
 }
@@ -724,12 +695,14 @@ var exitCodeRe = regexp.MustCompile(`(?im)^(?:Process exited with code|Exit code
 
 func commandOutputStatus(output string) (failed bool, known bool) {
 	trimmed := strings.TrimSpace(output)
+
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal([]byte(trimmed), &envelope) == nil {
 		if _, ok := exactString(envelope, "output"); ok {
 			if exitCode, ok := exactInt(envelope, "exit_code"); ok {
 				return exitCode != 0, true
 			}
+
 			if raw, ok := envelope["metadata"]; ok {
 				var metadata map[string]json.RawMessage
 				if json.Unmarshal(raw, &metadata) == nil {
@@ -739,6 +712,7 @@ func commandOutputStatus(output string) (failed bool, known bool) {
 				}
 			}
 		}
+
 		if _, ok := exactString(envelope, "message"); ok {
 			if timedOut, ok := exactBool(envelope, "timed_out"); ok && timedOut {
 				return true, true
@@ -753,6 +727,7 @@ func commandOutputStatus(output string) (failed bool, known bool) {
 	if strings.HasPrefix(status, "script running with cell id ") {
 		return false, false
 	}
+
 	switch status {
 	case "script completed":
 		return false, true
@@ -767,7 +742,7 @@ func commandOutputStatus(output string) (failed bool, known bool) {
 			header = header[:index]
 		}
 	}
-	for _, line := range strings.Split(header, "\n") {
+	for line := range strings.SplitSeq(header, "\n") {
 		if strings.EqualFold(strings.TrimSpace(line), "aborted by user") {
 			return true, true
 		}
@@ -776,6 +751,7 @@ func commandOutputStatus(output string) (failed bool, known bool) {
 	if len(match) == 2 {
 		return match[1] != "0", true
 	}
+
 	return false, false
 }
 
@@ -788,6 +764,7 @@ func toolOutputStatus(tool, output string) (failed bool, known bool) {
 			return true, true
 		}
 	}
+
 	return false, false
 }
 
@@ -796,10 +773,12 @@ func exactBoolPointer(data json.RawMessage, key string) *bool {
 	if json.Unmarshal(data, &fields) != nil {
 		return nil
 	}
+
 	value, ok := exactBool(fields, key)
 	if !ok {
 		return nil
 	}
+
 	return &value
 }
 
@@ -808,10 +787,12 @@ func exactBool(fields map[string]json.RawMessage, key string) (bool, bool) {
 	if !ok || strings.TrimSpace(string(raw)) == "null" {
 		return false, false
 	}
+
 	var value bool
 	if json.Unmarshal(raw, &value) != nil {
 		return false, false
 	}
+
 	return value, true
 }
 
@@ -820,10 +801,12 @@ func exactInt(fields map[string]json.RawMessage, key string) (int, bool) {
 	if !ok || strings.TrimSpace(string(raw)) == "null" {
 		return 0, false
 	}
+
 	var value int
 	if json.Unmarshal(raw, &value) != nil {
 		return 0, false
 	}
+
 	return value, true
 }
 
@@ -832,10 +815,12 @@ func exactString(fields map[string]json.RawMessage, key string) (string, bool) {
 	if !ok || strings.TrimSpace(string(raw)) == "null" {
 		return "", false
 	}
+
 	var value string
 	if json.Unmarshal(raw, &value) != nil {
 		return "", false
 	}
+
 	return value, true
 }
 
@@ -868,7 +853,8 @@ func loadTitleIndex(path string) map[string]string {
 	}
 	titleIndexCache.mu.Lock()
 	defer titleIndexCache.mu.Unlock()
-	if titleIndexCache.path == path && titleIndexCache.size == info.Size() && titleIndexCache.modTime.Equal(info.ModTime()) {
+	if titleIndexCache.path == path && titleIndexCache.size == info.Size() &&
+		titleIndexCache.modTime.Equal(info.ModTime()) {
 		return titleIndexCache.titles
 	}
 	f, err := os.Open(path)
