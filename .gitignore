@@ -18,3 +18,5 @@ yarn-debug.log*
 yarn-error.log*
 web/dist/
 web/node_modules/
+*.db-shm
+*.db-wal

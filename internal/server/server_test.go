@@ -1217,7 +1217,7 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 			Session: model.TraceSession{ID: id, Harness: "agent-api", Cwd: meta.Cwd, Path: meta.Path, EventCount: len(events)},
 			Events:  events,
 			Marks:   []model.Mark{},
-			Stats:   model.ComputeStats(&model.Trace{Events: events}, 1, model.ObservabilityExact),
+			Stats:   model.ComputeStats(&model.Trace{Events: events}, 1, model.ObservabilitySignals{Errors: model.ObservabilityExact}),
 		}
 	}
 	zeroMeta := metas[filepath.Clean(paths["child-zero"])]
@@ -1226,7 +1226,7 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 		Session: model.TraceSession{ID: "child-zero", Harness: "agent-api", Cwd: zeroMeta.Cwd, Path: zeroMeta.Path, EventCount: 0},
 		Events:  []model.Event{},
 		Marks:   []model.Mark{},
-		Stats:   model.ComputeStats(&model.Trace{Events: []model.Event{}}, 1, model.ObservabilityExact),
+		Stats:   model.ComputeStats(&model.Trace{Events: []model.Event{}}, 1, model.ObservabilitySignals{Errors: model.ObservabilityExact}),
 	}
 	graphs := map[string]*model.AgentGraph{
 		"root-a": {
@@ -1386,4 +1386,223 @@ func TestSessionAgentsForSourceWithoutGraphSupport(t *testing.T) {
 	if root.Kind != model.AgentKindMain || root.TraceSessionKey != key || root.LinkMethod != model.AgentLinkMethodRoot || root.TraceEventCount != 1 {
 		t.Fatalf("root node = %#v", root)
 	}
+}
+
+func TestServerLoadsCrushFixtureSession(t *testing.T) {
+	crushDir := filepath.Join("..", "..", "testdata", "crush")
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), PiDir: filepath.Join(t.TempDir(), "no-pi"), CrushDir: crushDir})
+
+	sessionsResp := httptest.NewRecorder()
+	s.handleSessions(sessionsResp, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if sessionsResp.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d body=%s", sessionsResp.Code, sessionsResp.Body.String())
+	}
+	var sessions []model.SessionMeta
+	if err := json.Unmarshal(sessionsResp.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+	if sessions[0].ID != "fixture-root" || sessions[0].Harness != "crush" {
+		t.Fatalf("session = %+v", sessions[0])
+	}
+	rootKey := sessions[0].Key
+
+	traceResp := httptest.NewRecorder()
+	s.handleSessionResource(traceResp, httptest.NewRequest(http.MethodGet, "/api/sessions/"+url.PathEscape(rootKey)+"/trace", nil))
+	if traceResp.Code != http.StatusOK {
+		t.Fatalf("trace status = %d body=%s", traceResp.Code, traceResp.Body.String())
+	}
+	var trace model.Trace
+	if err := json.Unmarshal(traceResp.Body.Bytes(), &trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace.Session.Harness != "crush" {
+		t.Fatalf("harness = %q", trace.Session.Harness)
+	}
+	// Four events: agent (subagent), read, write, bash.
+	if len(trace.Events) != 4 {
+		t.Fatalf("events = %d, want 4 (agent + read + write + bash)", len(trace.Events))
+	}
+	if trace.Events[0].Tool != "agent" {
+		t.Fatalf("first event tool = %q, want agent", trace.Events[0].Tool)
+	}
+	// Three marks: two user-message + one subagent.
+	if len(trace.Marks) != 3 {
+		t.Fatalf("marks = %+v", trace.Marks)
+	}
+	sawUser, sawSub := 0, false
+	for _, m := range trace.Marks {
+		if m.Type == "user-message" {
+			sawUser++
+		}
+		if m.Type == "subagent" {
+			sawSub = true
+		}
+	}
+	if sawUser != 2 || !sawSub {
+		t.Fatalf("marks missing user/sub: %+v", trace.Marks)
+	}
+
+	agentsResp := httptest.NewRecorder()
+	s.handleSessionResource(agentsResp, httptest.NewRequest(http.MethodGet, "/api/sessions/"+url.PathEscape(rootKey)+"/agents", nil))
+	if agentsResp.Code != http.StatusOK {
+		t.Fatalf("agents status = %d body=%s", agentsResp.Code, agentsResp.Body.String())
+	}
+	var graph model.AgentGraph
+	if err := json.Unmarshal(agentsResp.Body.Bytes(), &graph); err != nil {
+		t.Fatal(err)
+	}
+	if graph.RootSessionKey != rootKey {
+		t.Fatalf("root key = %q, want %q", graph.RootSessionKey, rootKey)
+	}
+	if len(graph.Agents) != 2 {
+		t.Fatalf("agents = %d, want 2", len(graph.Agents))
+	}
+	var sub *model.AgentNode
+	for i := range graph.Agents {
+		if graph.Agents[i].Kind == model.AgentKindSubagent {
+			sub = &graph.Agents[i]
+			break
+		}
+	}
+	if sub == nil {
+		t.Fatalf("no subagent in graph: %+v", graph.Agents)
+	}
+	if sub.TraceAvailability != model.TraceAvailabilityAvailable {
+		t.Fatalf("trace availability = %q", sub.TraceAvailability)
+	}
+}
+
+// TestServerSkipsCrushWhenDisabled verifies the --no-crush flag
+// disables the Crush adapter so a vendored or hostile .crush
+// directory does not bleed into the session list.
+func TestServerSkipsCrushWhenDisabled(t *testing.T) {
+	crushDir := filepath.Join("..", "..", "testdata", "crush")
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), CrushDir: crushDir, DisableCrush: true})
+
+	sessionsResp := httptest.NewRecorder()
+	s.handleSessions(sessionsResp, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if sessionsResp.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d", sessionsResp.Code)
+	}
+	var sessions []model.SessionMeta
+	if err := json.Unmarshal(sessionsResp.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range sessions {
+		if session.Harness == "crush" {
+			t.Fatalf("found Crush session %+v with DisableCrush=true", session)
+		}
+	}
+}
+
+// TestAdaptersEndpoint verifies the /api/adapters endpoint returns
+// every registered adapter with its harness name, session directory,
+// live session count, and agent-graph capability flag.
+func TestAdaptersEndpoint(t *testing.T) {
+	crushDir := filepath.Join("..", "..", "testdata", "crush")
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), PiDir: filepath.Join(t.TempDir(), "no-pi"), CrushDir: crushDir})
+
+	// Warm the scan so session counts are populated.
+	if _, err := s.listSessions(); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := httptest.NewRecorder()
+	s.handleAdapters(resp, httptest.NewRequest(http.MethodGet, "/api/adapters", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var infos []adapterInfo
+	if err := json.Unmarshal(resp.Body.Bytes(), &infos); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]struct {
+		count      int
+		agentGraph bool
+	}{
+		"claude-code": {0, true},
+		"codex":       {0, true},
+		"pi":          {0, false},
+		"crush":       {1, true},
+	}
+	if len(infos) != len(want) {
+		t.Fatalf("adapter count = %d, want %d", len(infos), len(want))
+	}
+	for _, info := range infos {
+		expected, ok := want[info.Harness]
+		if !ok {
+			t.Fatalf("unexpected harness %q", info.Harness)
+		}
+		if info.SessionCount != expected.count {
+			t.Errorf("harness %q session count = %d, want %d", info.Harness, info.SessionCount, expected.count)
+		}
+		if info.AgentGraph != expected.agentGraph {
+			t.Errorf("harness %q agentGraph = %v, want %v", info.Harness, info.AgentGraph, expected.agentGraph)
+		}
+		if info.SessionDir == "" {
+			t.Errorf("harness %q has empty sessionDir", info.Harness)
+		}
+	}
+}
+
+// TestLoadTraceAndMapDoesNotGarbageRootCrushPaths is a regression test
+// for a bug where loadTraceAndMap fell back to filepath.Dir(meta.Path)
+// for crush:// sessions with no resolved Cwd: filepath.Dir produced
+// "crush:/session" — a garbage root that the citymap builder tried to
+// read, producing a broken map.
+func TestLoadTraceAndMapDoesNotGarbageRootCrushPaths(t *testing.T) {
+	crushPath := "crush://session/no-cwd-session"
+	meta := model.SessionMeta{
+		Key:     adapter.SessionKey("crush", crushPath),
+		ID:      "no-cwd-session",
+		Harness: "crush",
+		Path:    crushPath,
+	}
+	source := &singleCrushSource{
+		path: crushPath,
+		trace: &model.Trace{
+			Version: 1,
+			Session: model.TraceSession{ID: "no-cwd-session", Harness: "crush", Path: crushPath},
+			Events:  []model.Event{},
+			Marks:   []model.Mark{},
+		},
+		meta: meta,
+	}
+	s := New(Config{CrushDir: filepath.Join(t.TempDir(), "no-crush")})
+	s.adapters = []adapter.Source{source}
+	s.sessionCatalog = map[string]model.SessionMeta{meta.Key: meta}
+
+	trace, city, err := s.traceAndMapMeta(meta)
+	if err != nil {
+		t.Fatalf("traceAndMapMeta failed: %v", err)
+	}
+	if trace == nil {
+		t.Fatal("trace is nil")
+	}
+	if strings.HasPrefix(city.Repo.Root, "crush:") {
+		t.Fatalf("citymap root = %q (garbage from filepath.Dir on synthetic path)", city.Repo.Root)
+	}
+}
+
+type singleCrushSource struct {
+	path  string
+	trace *model.Trace
+	meta  model.SessionMeta
+}
+
+func (s *singleCrushSource) Harness() string    { return "crush" }
+func (s *singleCrushSource) SessionDir() string { return "" }
+func (s *singleCrushSource) ListSessions() ([]model.SessionMeta, error) {
+	return nil, nil
+}
+func (s *singleCrushSource) Summarize(path string) (model.SessionMeta, error) {
+	return s.meta, nil
+}
+func (s *singleCrushSource) Parse(path string) (*model.Trace, error) {
+	clone := *s.trace
+	return &clone, nil
 }
