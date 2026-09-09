@@ -28,9 +28,11 @@ func TestTruncateRunes(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("TruncateRunes() = %q, want %q", got, tt.want)
 			}
+
 			if !utf8.ValidString(got) {
 				t.Fatalf("TruncateRunes() returned invalid UTF-8: %q", got)
 			}
+
 			if gotRunes := len([]rune(got)); gotRunes > tt.limit {
 				t.Fatalf("TruncateRunes() returned %d runes, limit %d", gotRunes, tt.limit)
 			}

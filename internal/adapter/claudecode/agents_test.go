@@ -38,9 +38,11 @@ func TestClaudeAgentGraphExactUsesToolUseIDForImmediateParent(t *testing.T) {
 	if graph.Version != model.AgentGraphVersion || graph.RootSessionKey != fixture.root.Key {
 		t.Fatalf("graph header = %#v", graph)
 	}
+
 	if len(graph.Agents) != 3 || graph.Agents[0] != claudeMainNode(fixture.root) {
 		t.Fatalf("agents = %#v", graph.Agents)
 	}
+
 	childNode := findClaudeAgent(t, graph, "Child")
 	childID := claudeAgentID(fixture.root, "claude-tool:call-child")
 	assertClaudeAgent(t, childNode, model.AgentNode{
@@ -51,7 +53,7 @@ func TestClaudeAgentGraphExactUsesToolUseIDForImmediateParent(t *testing.T) {
 		Label:              "Child",
 		Role:               "Explore",
 		InstructionPreview: "inspect the code",
-		LaunchSeq:          intPointer(1),
+		LaunchSeq:          new(1),
 		LaunchCallID:       "call-child",
 		Status:             model.AgentStatusLaunched,
 		TraceAvailability:  model.TraceAvailabilityAvailable,
@@ -68,7 +70,7 @@ func TestClaudeAgentGraphExactUsesToolUseIDForImmediateParent(t *testing.T) {
 		Label:              "Grandchild",
 		Role:               "Plan",
 		InstructionPreview: "plan the fix",
-		LaunchSeq:          intPointer(0),
+		LaunchSeq:          new(0),
 		LaunchCallID:       "call-grand",
 		Status:             model.AgentStatusLaunched,
 		TraceAvailability:  model.TraceAvailabilityAvailable,
@@ -148,7 +150,7 @@ func TestClaudeAgentGraphMetadataOnlyChildIsMissing(t *testing.T) {
 		Label:              "Missing",
 		Role:               "Explore",
 		InstructionPreview: "find the missing trace",
-		LaunchSeq:          intPointer(0),
+		LaunchSeq:          new(0),
 		LaunchCallID:       "call-missing",
 		Status:             model.AgentStatusLaunched,
 		TraceAvailability:  model.TraceAvailabilityMissing,
@@ -167,7 +169,8 @@ func TestClaudeAgentGraphZeroEventChildIsAvailable(t *testing.T) {
 	}, claudeChildMeta{Description: "Zero", ToolUseID: "call-zero", SpawnDepth: 1})
 
 	node := findClaudeAgent(t, fixture.build(t), "Zero")
-	if node.TraceAvailability != model.TraceAvailabilityAvailable || node.TraceSessionKey != child.Key || node.TraceEventCount != 0 {
+	if node.TraceAvailability != model.TraceAvailabilityAvailable || node.TraceSessionKey != child.Key ||
+		node.TraceEventCount != 0 {
 		t.Fatalf("zero-event node = %#v", node)
 	}
 }
@@ -189,7 +192,7 @@ func TestClaudeAgentGraphErrorResultIsFailed(t *testing.T) {
 		Label:              "Failed launch",
 		Role:               "Plan",
 		InstructionPreview: "try it",
-		LaunchSeq:          intPointer(0),
+		LaunchSeq:          new(0),
 		LaunchCallID:       "call-failed",
 		Status:             model.AgentStatusFailed,
 		TraceAvailability:  model.TraceAvailabilityUnavailable,
@@ -230,6 +233,7 @@ func TestClaudeAgentGraphDuplicateCallIDProducesOneNode(t *testing.T) {
 	if len(graph.Agents) != 2 {
 		t.Fatalf("agents = %#v, want Main plus one shared-call node", graph.Agents)
 	}
+
 	if graph.Agents[1].Label != "Shared" || graph.Agents[1].TraceAvailability != model.TraceAvailabilityAvailable {
 		t.Fatalf("shared node = %#v", graph.Agents[1])
 	}
@@ -254,14 +258,17 @@ func TestClaudeAgentGraphUsesStablePreorder(t *testing.T) {
 	}, claudeChildMeta{Description: "A1", ToolUseID: "call-a1", SpawnDepth: 2})
 
 	graph := fixture.build(t)
+
 	labels := make([]string, len(graph.Agents))
 	for i, node := range graph.Agents {
 		labels[i] = node.Label
 	}
+
 	want := []string{"Main", "A", "A1", "B"}
 	if len(labels) != len(want) {
 		t.Fatalf("agent order = %v, want %v", labels, want)
 	}
+
 	for i := range want {
 		if labels[i] != want[i] {
 			t.Fatalf("agent order = %v, want %v", labels, want)
@@ -280,6 +287,7 @@ func TestClaudeAgentGraphInputsIncludeChildTracesAndSidecars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := map[string]bool{
 		fixture.root.Path: true,
 		child.Path:        true,
@@ -289,6 +297,7 @@ func TestClaudeAgentGraphInputsIncludeChildTracesAndSidecars(t *testing.T) {
 	if len(inputs) != len(want) {
 		t.Fatalf("graph inputs = %v, want %v", inputs, want)
 	}
+
 	for _, path := range inputs {
 		if !want[path] {
 			t.Fatalf("unexpected graph input %q in %v", path, inputs)
@@ -315,29 +324,42 @@ func newClaudeAgentFixture(t *testing.T, rootLines []any) *claudeAgentFixture {
 	dir := t.TempDir()
 	a := Adapter{Dir: dir}
 	rootPath := filepath.Join(dir, "root-id.jsonl")
+
 	lines := append([]any{claudeUser("root-id", "root prompt")}, rootLines...)
 	writeClaudeAgentJSONL(t, rootPath, lines...)
+
 	root, err := a.Summarize(rootPath)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	subagentsDir := filepath.Join(dir, "root-id", "subagents")
 	if err := os.MkdirAll(subagentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	return &claudeAgentFixture{adapter: a, root: root, subagentsDir: subagentsDir}
 }
 
-func (f *claudeAgentFixture) addChild(t *testing.T, basename string, lines []any, meta claudeChildMeta) model.SessionMeta {
+func (f *claudeAgentFixture) addChild(
+	t *testing.T,
+	basename string,
+	lines []any,
+	meta claudeChildMeta,
+) model.SessionMeta {
 	t.Helper()
+
 	path := filepath.Join(f.subagentsDir, basename+".jsonl")
 	writeClaudeAgentJSONL(t, path, lines...)
 	f.writeMeta(t, basename, meta)
+
 	session, err := f.adapter.Summarize(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	f.catalog = append(f.catalog, session)
+
 	return session
 }
 
@@ -348,10 +370,12 @@ func (f *claudeAgentFixture) addMetaOnly(t *testing.T, basename string, meta cla
 
 func (f *claudeAgentFixture) writeMeta(t *testing.T, basename string, meta claudeChildMeta) {
 	t.Helper()
+
 	data, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(filepath.Join(f.subagentsDir, basename+".meta.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -359,10 +383,12 @@ func (f *claudeAgentFixture) writeMeta(t *testing.T, basename string, meta claud
 
 func (f *claudeAgentFixture) build(t *testing.T) *model.AgentGraph {
 	t.Helper()
+
 	graph, err := f.adapter.BuildAgentGraph(f.root, f.catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return graph
 }
 
@@ -377,6 +403,7 @@ func claudeSidechainUser(sessionID, agentID, text string) map[string]any {
 	line := claudeUser(sessionID, text)
 	line["agentId"] = agentID
 	line["isSidechain"] = true
+
 	return line
 }
 
@@ -413,20 +440,25 @@ func claudeMessageItem(sessionID, agentID, role string, item map[string]any) map
 		line["agentId"] = agentID
 		line["isSidechain"] = true
 	}
+
 	return line
 }
 
 func writeClaudeAgentJSONL(t *testing.T, path string, values ...any) {
 	t.Helper()
+
 	var content []byte
+
 	for _, value := range values {
 		line, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		content = append(content, line...)
 		content = append(content, '\n')
 	}
+
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -434,18 +466,23 @@ func writeClaudeAgentJSONL(t *testing.T, path string, values ...any) {
 
 func findClaudeAgent(t *testing.T, graph *model.AgentGraph, label string) model.AgentNode {
 	t.Helper()
+
 	for _, node := range graph.Agents {
 		if node.Label == label {
 			return node
 		}
 	}
+
 	t.Fatalf("agent %q not found in %#v", label, graph.Agents)
+
 	return model.AgentNode{}
 }
 
 func assertClaudeAgent(t *testing.T, got, want model.AgentNode) {
 	t.Helper()
+
 	gotJSON, _ := json.Marshal(got)
+
 	wantJSON, _ := json.Marshal(want)
 	if string(gotJSON) != string(wantJSON) {
 		t.Fatalf("agent:\n got: %s\nwant: %s", gotJSON, wantJSON)
@@ -473,8 +510,4 @@ func claudeMainID(root model.SessionMeta) string {
 
 func claudeAgentID(root model.SessionMeta, identity string) string {
 	return baseadapter.AgentNodeID((Adapter{}).Harness(), root.Key, identity)
-}
-
-func intPointer(value int) *int {
-	return &value
 }
