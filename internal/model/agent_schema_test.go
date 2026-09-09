@@ -70,16 +70,19 @@ func TestAgentGraphSchemaAcceptsRepresentativeGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
 		t.Fatal(err)
 	}
 
 	compiler := jsonschema.NewCompiler()
+
 	schema, err := compiler.Compile("../../schema/agent-graph.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := schema.Validate(value); err != nil {
 		t.Fatalf("representative AgentGraph violates schema: %v\n%s", err, document)
 	}

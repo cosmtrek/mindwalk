@@ -261,7 +261,7 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 	}
 	trace.Session.EventCount = len(trace.Events)
 	// Claude Code tool results carry an is_error flag set by the harness.
-	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilityExact)
+	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilitySignals{Errors: model.ObservabilityExact})
 	if !recognized {
 		return nil, fmt.Errorf("not a Claude Code session: %s", path)
 	}
