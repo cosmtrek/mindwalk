@@ -263,7 +263,7 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 	trace.Session.Title = sessionTitle(entries, firstUserText, path)
 	trace.Session.EventCount = len(trace.Events)
 	// pi tool results carry an isError flag set by the harness.
-	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilityExact)
+	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilitySignals{Errors: model.ObservabilityExact})
 	return trace, err
 }
 

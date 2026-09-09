@@ -365,7 +365,7 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 	// Codex logs carry no structural error flag; failures are inferred from
 	// output text, and inner commands of the js exec runner surface only what
 	// the script chooses to print.
-	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilityEstimated)
+	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilitySignals{Errors: model.ObservabilityEstimated})
 	if !recognized {
 		return nil, fmt.Errorf("not a Codex session: %s", path)
 	}
