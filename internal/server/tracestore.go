@@ -82,7 +82,10 @@ func (ts *traceStore) load(layer map[string]*traceEntry, kind string, meta model
 	}
 	inflightKey := kind + "\x00" + key
 	for {
-		fingerprint, err := fingerprintFile(meta.Path)
+		// fingerprintPath (not fingerprintFile): synthetic session paths
+		// (crush://) are not filesystem locations and get a zero
+		// fingerprint so the cache still works without stat-ing them.
+		fingerprint, err := fingerprintPath(meta.Path)
 		if err != nil {
 			ts.mu.Lock()
 			delete(layer, key)

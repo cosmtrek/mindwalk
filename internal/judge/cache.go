@@ -2,9 +2,11 @@ package judge
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/model"
 )
 
@@ -17,11 +19,7 @@ type Cache struct {
 // DefaultCacheDir is ~/.mindwalk/reports — mindwalk's own data directory,
 // never inside ~/.claude, ~/.codex, or the inspected repository.
 func DefaultCacheDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".mindwalk", "reports")
+	return adapter.HomePath(".mindwalk", "reports")
 }
 
 func (c Cache) path(sessionKey string) string {
@@ -146,6 +144,13 @@ func rubricFresh(report *model.Report, trace *model.Trace) bool {
 }
 
 func (c Cache) Store(sessionKey string, report *model.Report) error {
+	if err := c.store(sessionKey, report); err != nil {
+		return fmt.Errorf("store report for session %s: %w", sessionKey, err)
+	}
+	return nil
+}
+
+func (c Cache) store(sessionKey string, report *model.Report) error {
 	if c.Dir == "" || sessionKey == "" {
 		return nil
 	}
@@ -164,16 +169,16 @@ func (c Cache) Store(sessionKey string, report *model.Report) error {
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	if err := os.Rename(tmp.Name(), c.path(sessionKey)); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	return nil

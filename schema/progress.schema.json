@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindwalk.local/schema/progress.schema.json",
+  "title": "mindwalk judge progress",
+  "description": "Step-level update emitted during an evaluation run and streamed to the browser via Server-Sent Events. The frontend opens an EventSource that receives 'progress' events (one per judge milestone) followed by a terminal 'status' event. Each SSE event also carries an 'id:' line (the zero-based event index in the progress log) so a dropped connection can resume from Last-Event-ID without replaying duplicates.",
+  "type": "object",
+  "required": ["phase", "message"],
+  "properties": {
+    "phase": {
+      "enum": ["start", "rubric", "scoring", "done", "error"],
+      "description": "The coarse pipeline stage: 'start' is the initial event every run emits; 'rubric' covers task-rubric generation or reuse; 'scoring' is the unified scoring pass; 'done' signals completion; 'error' signals failure"
+    },
+    "step": {
+      "enum": ["skip", "reuse", "generate", "complete", "retry", "fail"],
+      "description": "Qualifies the phase: 'skip' (rubric deterministically skipped), 'reuse' (cached rubric reused), 'generate' (rubric being drafted), 'complete' (phase finished), 'retry' (scoring retrying), 'fail' (phase failed). Omitted when the phase needs no sub-step"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable description safe to show as-is in the evaluation progress panel"
+    }
+  },
+  "additionalProperties": false
+}

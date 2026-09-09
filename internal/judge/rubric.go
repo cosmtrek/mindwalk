@@ -53,11 +53,12 @@ type llmRubric struct {
 // Generation failure degrades (status unavailable) rather than erroring —
 // the fixed dimensions must never be blocked by the rubric layer. Only a
 // subprocess failure is a hard error, since scoring would hit it too.
-func acquireRubric(ctx context.Context, runner Runner, trace *model.Trace, cached *model.Report) (*model.Rubric, error) {
+func acquireRubric(ctx context.Context, runner Runner, trace *model.Trace, cached *model.Report, onProgress func(Progress)) (*model.Rubric, error) {
 	// Conversation-only sessions (no tool events) leave nothing to cite:
 	// scoring would drop every finding and hand out good verdicts on zero
 	// evidence — the M1.5 bench caught exactly that.
 	if len(trace.Events) == 0 {
+		emitProgress(onProgress, Progress{Phase: "rubric", Step: "skip", Message: "No tool events — skipping rubric"})
 		return &model.Rubric{Status: model.RubricStatusUnavailable, Reason: model.RubricReasonNoEvents}, nil
 	}
 	// One task-evidence contract: the generator's input, the anchor
@@ -65,15 +66,19 @@ func acquireRubric(ctx context.Context, runner Runner, trace *model.Trace, cache
 	// taskMessages — never a differently budgeted list.
 	messages := taskMessages(trace.Marks)
 	if len(messages) == 0 {
+		emitProgress(onProgress, Progress{Phase: "rubric", Step: "skip", Message: "No task text — skipping rubric"})
 		return &model.Rubric{Status: model.RubricStatusUnavailable, Reason: model.RubricReasonNoTaskText}, nil
 	}
 	if taskTextRunes(trace.Marks) < weakTaskTextRunes {
+		emitProgress(onProgress, Progress{Phase: "rubric", Step: "skip", Message: "Task text too short — skipping rubric"})
 		return &model.Rubric{Status: model.RubricStatusUnavailable, Reason: model.RubricReasonWeakTaskText}, nil
 	}
 	digest := TaskDigest(trace, model.RubricSourceFull)
 	if reused := reusableRubric(cached, digest); reused != nil {
+		emitProgress(onProgress, Progress{Phase: "rubric", Step: "reuse", Message: "Reusing cached rubric criteria"})
 		return reused, nil
 	}
+	emitProgress(onProgress, Progress{Phase: "rubric", Step: "generate", Message: "Drafting task-specific criteria…"})
 	input := BuildRubricInput(trace)
 	for attempt := 0; attempt < 2; attempt++ {
 		result, err := runner.Run(ctx, rubricPrompt, input)
@@ -84,6 +89,7 @@ func acquireRubric(ctx context.Context, runner Runner, trace *model.Trace, cache
 		if err != nil {
 			continue
 		}
+		emitProgress(onProgress, Progress{Phase: "rubric", Step: "complete", Message: "Rubric criteria drafted"})
 		return &model.Rubric{
 			Status:     model.RubricStatusScored,
 			Source:     model.RubricSourceFull,
@@ -91,6 +97,7 @@ func acquireRubric(ctx context.Context, runner Runner, trace *model.Trace, cache
 			Tasks:      tasks,
 		}, nil
 	}
+	emitProgress(onProgress, Progress{Phase: "rubric", Step: "fail", Message: "Rubric generation failed — scoring dimensions only"})
 	return &model.Rubric{Status: model.RubricStatusUnavailable, Reason: model.RubricReasonGenerationFailed}, nil
 }
 

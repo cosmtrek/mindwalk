@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cosmtrek/mindwalk/internal/model"
 	"github.com/cosmtrek/mindwalk/internal/textutil"
+	"github.com/dustin/go-humanize/english"
 )
 
 type Source interface {
@@ -23,6 +25,88 @@ type Source interface {
 	ListSessions() ([]model.SessionMeta, error)
 	Summarize(path string) (model.SessionMeta, error)
 	Parse(path string) (*model.Trace, error)
+}
+
+// Closer is implemented by adapters that hold reusable resources
+// (database connection pools, file handles) that must be released on
+// shutdown. Adapters that do not implement Close rely on garbage
+// collection.
+type Closer interface {
+	Close() error
+}
+
+// DiagnosticCheck is the result of a single health probe. Status is
+// "ok", "warn", or "error"; Detail carries a human-readable explanation
+// or the resolved value (e.g. the data-directory path).
+type DiagnosticCheck struct {
+	Name   string
+	Status string
+	Detail string
+}
+
+// DiagnosticsSource is optionally implemented by adapters that can run
+// deeper health checks beyond listing sessions. The doctor command
+// discovers this via type assertion.
+type DiagnosticsSource interface {
+	Diagnostics() []DiagnosticCheck
+}
+
+// FilesystemDiagnostics builds standard health checks for a
+// filesystem-based adapter: the data directory exists and is readable,
+// and a count of session files matching suffix. Adapters call it from
+// their Diagnostics() method and may append adapter-specific checks.
+func FilesystemDiagnostics(dir, suffix string) []DiagnosticCheck {
+	var checks []DiagnosticCheck
+	if dir == "" {
+		checks = append(checks, DiagnosticCheck{
+			Name:   "data-dir",
+			Status: "error",
+			Detail: "no data directory configured",
+		})
+
+		return checks
+	}
+
+	if !ReadableDir(dir) {
+		checks = append(checks, DiagnosticCheck{
+			Name:   "data-dir",
+			Status: "warn",
+			Detail: fmt.Sprintf("directory %s does not exist or is not readable", dir),
+		})
+
+		return checks
+	}
+
+	checks = append(checks, DiagnosticCheck{
+		Name:   "data-dir",
+		Status: "ok",
+		Detail: dir,
+	})
+	count := countFilesBySuffix(dir, suffix)
+	checks = append(checks, DiagnosticCheck{
+		Name:   "session-files",
+		Status: "ok",
+		Detail: fmt.Sprintf("%d %s file(s) found", count, suffix),
+	})
+
+	return checks
+}
+
+func countFilesBySuffix(dir, suffix string) int {
+	count := 0
+	_ = filepath.WalkDir(dir, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+
+		if strings.HasSuffix(entry.Name(), suffix) {
+			count++
+		}
+
+		return nil
+	})
+
+	return count
 }
 
 type AgentGraphSource interface {
@@ -38,14 +122,88 @@ type SummarySidecarSource interface {
 	SummaryInputs(path string) []string
 }
 
+// IsAgentGraphSource reports whether a source implements the agent-graph
+// capability. Used by the server's adapter-status endpoint.
+func IsAgentGraphSource(src Source) bool {
+	_, ok := src.(AgentGraphSource)
+
+	return ok
+}
+
+// UserHomeDir returns the current user's home directory, or "" when
+// the OS cannot resolve one (containers, unusual platforms). Callers
+// append a relative path and treat the empty return as "do not probe".
+func UserHomeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return home
+}
+
+// HomePath joins an absolute path under the user's home directory,
+// returning "" when the home directory cannot be resolved. Callers use
+// the empty return as a "not configured" signal — they never fall back
+// to a synthesized path.
+func HomePath(parts ...string) string {
+	home := UserHomeDir()
+	if home == "" {
+		return ""
+	}
+
+	return filepath.Join(append([]string{home}, parts...)...)
+}
+
+// OpenFile opens a session log for reading and returns the file plus a
+// close function callers can `defer` inline. Returning the file plus a
+// deferred close was repeated across every JSONL adapter; this helper
+// keeps the common two-line ceremony in one place and makes the
+// "open then read" intent visible at every call site.
+func OpenFile(path string) (*os.File, func(), error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return f, func() { _ = f.Close() }, nil
+}
+
+// ReadableDir reports whether dir is a directory the caller can read.
+// Adapters use it to short-circuit ListSessions on missing ~/.harness
+// trees before walking them.
+func ReadableDir(dir string) bool {
+	if dir == "" {
+		return false
+	}
+
+	info, err := os.Stat(dir)
+
+	return err == nil && info.IsDir()
+}
+
+// NotRecognizedErr builds the error a JSONL adapter returns when it
+// walked the file but never saw a recognizable event for its harness.
+// Centralizing the format keeps the user-visible message and any future
+// flag (e.g. logging the candidate path) consistent across adapters.
+func NotRecognizedErr(harness, path string) error {
+	return fmt.Errorf("not a %s session: %s", harness, path)
+}
+
 type ToolCall struct {
 	ID        string
 	Name      string
 	Input     map[string]any
 	Timestamp string
+	// ProviderExecuted is true when the tool was executed server-side
+	// by the model provider (e.g. computer use) rather than locally.
+	ProviderExecuted bool
 }
 
 type ToolResult struct {
+	// ToolCallID pairs a result with its ToolCall.ID when the harness
+	// records the linkage; adapters that pair positionally leave it empty.
+	ToolCallID   string
 	Content      string
 	IsError      bool
 	OutcomeKnown bool
@@ -55,21 +213,33 @@ type ToolResult struct {
 // session ID. Codex resume rollouts can share an ID across multiple files, so
 // IDs are display metadata rather than safe routing or cache keys.
 func SessionKey(harness, path string) string {
+	path = NormalizePath(path)
+	sum := sha256.Sum256([]byte(harness + "\x00" + path))
+
+	return fmt.Sprintf("%s-%x", harness, sum[:12])
+}
+
+// NormalizePath returns the absolute, cleaned form of path. Callers
+// that want to route or hash a path use this so equivalent inputs
+// ("./foo", "foo", absolute paths to the same file) collapse to the
+// same string.
+func NormalizePath(path string) string {
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
 	}
-	path = filepath.Clean(path)
-	sum := sha256.Sum256([]byte(harness + "\x00" + path))
-	return fmt.Sprintf("%s-%x", harness, sum[:12])
+
+	return filepath.Clean(path)
 }
 
 func AgentNodeID(harness, rootSessionKey, actorIdentity string) string {
 	sum := sha256.Sum256([]byte(harness + "\x00" + rootSessionKey + "\x00" + actorIdentity))
+
 	return fmt.Sprintf("agt_%x", sum[:12])
 }
 
 func AgentInstructionPreview(text string) string {
 	text = strings.Join(strings.Fields(text), " ")
+
 	return textutil.TruncateRunes(text, 240, "…")
 }
 
@@ -84,26 +254,35 @@ func OrderAgentNodesPreorder(nodes []model.AgentNode) []model.AgentNode {
 
 	children := make(map[string][]model.AgentNode)
 	roots := make([]model.AgentNode, 0, 1)
+
 	for _, node := range nodes {
 		if node.Kind == model.AgentKindMain || node.ParentID == "" || !known[node.ParentID] {
 			roots = append(roots, node)
+
 			continue
 		}
+
 		children[node.ParentID] = append(children[node.ParentID], node)
 	}
+
 	sortAgentNodeSiblings(roots)
+
 	for parentID := range children {
 		sortAgentNodeSiblings(children[parentID])
 	}
 
 	ordered := make([]model.AgentNode, 0, len(nodes))
 	visited := make(map[string]bool, len(nodes))
+
 	var visit func(model.AgentNode)
+
 	visit = func(node model.AgentNode) {
 		if visited[node.ID] {
 			return
 		}
+
 		visited[node.ID] = true
+
 		ordered = append(ordered, node)
 		for _, child := range children[node.ID] {
 			visit(child)
@@ -115,9 +294,11 @@ func OrderAgentNodesPreorder(nodes []model.AgentNode) []model.AgentNode {
 
 	remaining := append([]model.AgentNode(nil), nodes...)
 	sortAgentNodeSiblings(remaining)
+
 	for _, node := range remaining {
 		visit(node)
 	}
+
 	return ordered
 }
 
@@ -127,15 +308,19 @@ func sortAgentNodeSiblings(nodes []model.AgentNode) {
 		if left.Kind == model.AgentKindMain || right.Kind == model.AgentKindMain {
 			return left.Kind == model.AgentKindMain && right.Kind != model.AgentKindMain
 		}
+
 		if (left.LaunchSeq == nil) != (right.LaunchSeq == nil) {
 			return left.LaunchSeq != nil
 		}
+
 		if left.LaunchSeq != nil && *left.LaunchSeq != *right.LaunchSeq {
 			return *left.LaunchSeq < *right.LaunchSeq
 		}
+
 		if left.Label != right.Label {
 			return left.Label < right.Label
 		}
+
 		return left.ID < right.ID
 	})
 }
@@ -150,6 +335,7 @@ const userMessageNoteLimit = 2000
 // promises the note never exceeds userMessageNoteLimit runes in total.
 func UserMessageNote(text string) string {
 	text = strings.TrimSpace(text)
+
 	return textutil.TruncateRunes(text, userMessageNoteLimit, "…")
 }
 
@@ -171,6 +357,7 @@ func InjectedUserMessage(text string) bool {
 	if strings.HasPrefix(text, "# AGENTS.md instructions") {
 		return true
 	}
+
 	return strings.HasPrefix(text, "<") && strings.HasSuffix(text, ">")
 }
 
@@ -184,10 +371,12 @@ func ReadJSONLines(r io.Reader, visit func([]byte)) error {
 				visit(line)
 			}
 		}
+
 		if err != nil {
 			if err == io.EOF {
 				return nil
 			}
+
 			return err
 		}
 	}
@@ -195,21 +384,24 @@ func ReadJSONLines(r io.Reader, visit func([]byte)) error {
 
 func BuildEvent(trace *model.Trace, call ToolCall, result ToolResult) model.Event {
 	action := actionFor(call.Name, call.Input, result.Content)
+
 	targets, outside := targetsFor(trace.Session.Cwd, call.Name, call.Input, result.Content)
 	if targets == nil {
 		targets = []model.Target{}
 	}
+
 	return model.Event{
-		Seq:          len(trace.Events),
-		Timestamp:    call.Timestamp,
-		Tool:         call.Name,
-		Action:       action,
-		Targets:      targets,
-		Outside:      outside,
-		ResultBytes:  len(result.Content),
-		IsError:      result.IsError,
-		OutcomeKnown: result.OutcomeKnown,
-		Summary:      SummarizeTool(call.Name, call.Input, targets, outside, result.IsError),
+		Seq:              len(trace.Events),
+		Timestamp:        call.Timestamp,
+		Tool:             call.Name,
+		Action:           action,
+		Targets:          targets,
+		Outside:          outside,
+		ResultBytes:      len(result.Content),
+		IsError:          result.IsError,
+		OutcomeKnown:     result.OutcomeKnown,
+		Summary:          SummarizeTool(call.Name, call.Input, targets, outside, result.IsError),
+		ProviderExecuted: call.ProviderExecuted,
 	}
 }
 
@@ -226,14 +418,17 @@ func ContentToString(v any) string {
 				if text, ok := m["text"].(string); ok {
 					parts = append(parts, text)
 				}
+
 				if text, ok := m["content"].(string); ok {
 					parts = append(parts, text)
 				}
 			}
 		}
+
 		return strings.Join(parts, "\n")
 	default:
 		b, _ := json.Marshal(v)
+
 		return string(b)
 	}
 }
@@ -253,82 +448,118 @@ func actionFor(tool string, input map[string]any, result string) string {
 	switch tool {
 	case "Read", "read":
 		return "read"
-	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "write", "edit":
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "write", "edit", "multiedit":
 		return "edit"
-	case "Grep", "Glob", "LS", "view_image", "grep", "find", "ls":
+	case "Grep", "Glob", "LS", "view_image", "grep", "find", "ls", "glob", "sourcegraph":
 		return "search"
 	case "Bash", "bash", "exec_command", "write_stdin", "js", "js_repl":
 		command := firstString(input, "command", "cmd", "code", "chars", "script", "_raw")
 		if verifyCommand(command) {
 			return "verify"
 		}
+
 		if searchCommand(command) {
 			return "search"
 		}
+
 		if readCommand(command) {
 			return "read"
 		}
+
 		return "exec"
 	case "exec":
 		if len(execPatchPaths(input)) > 0 {
 			return "edit"
 		}
+
 		commands := execCommands(input)
 		if len(commands) == 0 || !execHasOnlyStaticCommands(input, len(commands)) {
 			return "exec"
 		}
+
 		allVerify, allSearch, allRead := true, true, true
+
 		for _, command := range commands {
 			if !verifyCommand(command.command) {
 				allVerify = false
 			}
+
 			if !searchCommand(command.command) {
 				allSearch = false
 			}
+
 			if !readCommand(command.command) {
 				allRead = false
 			}
 		}
+
 		if allVerify {
 			return "verify"
 		}
+
 		if allSearch {
 			return "search"
 		}
+
 		if allRead {
 			return "read"
 		}
+
 		return "exec"
+	case "view",
+		"lsp_definition",
+		"lsp_references",
+		"lsp_symbols",
+		"lsp_call_hierarchy",
+		"fetch",
+		"agentic_fetch",
+		"web_fetch":
+		return "read"
+	case "download":
+		return "read"
+	case "todos", "question":
+		return "other"
 	default:
 		_ = result
+
 		return "other"
 	}
 }
 
 func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.Target, []model.OutsideTouch) {
-	var targets []model.Target
-	var outside []model.OutsideTouch
+	var (
+		targets []model.Target
+		outside []model.OutsideTouch
+	)
+
 	add := func(path, touch string, weak bool, lines [][2]int, base string) {
 		rel, out, ok := normalizePath(cwd, base, path)
 		if !ok {
 			return
 		}
+
 		if out != nil {
 			outside = append(outside, *out)
+
 			return
 		}
+
 		if weak && !repoPathExists(cwd, rel) {
 			return
 		}
+
 		for i := range targets {
 			if targets[i].Path == rel {
 				if model.RankTouch(touch) > model.RankTouch(targets[i].Touch) {
 					targets[i].Touch = touch
 				}
+
 				targets[i].Lines = append(targets[i].Lines, lines...)
+
 				return
 			}
 		}
+
 		targets = append(targets, model.Target{Path: rel, Touch: touch, Lines: lines, Weak: weak})
 	}
 
@@ -337,16 +568,19 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		if path, ok := input["file_path"].(string); ok {
 			add(path, "read", false, readLines(input), "")
 		}
+
 		if path, ok := input["path"].(string); ok {
 			add(path, "read", false, readLines(input), "")
 		}
-	case "Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit":
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit", "multiedit":
 		if path, ok := input["file_path"].(string); ok {
 			add(path, "edit", false, nil, "")
 		}
+
 		if path, ok := input["notebook_path"].(string); ok {
 			add(path, "edit", false, nil, "")
 		}
+
 		if path, ok := input["path"].(string); ok {
 			add(path, "edit", false, nil, "")
 		}
@@ -354,52 +588,72 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		for _, hit := range parsePathHits(result) {
 			add(hit.path, "hit", false, hit.lines, "")
 		}
+
 		if len(targets) == 0 {
 			if path, ok := input["path"].(string); ok {
 				add(path, "hit", true, nil, "")
 			}
 		}
-	case "Glob", "LS", "find", "ls":
+	case "Glob", "LS", "find", "ls", "glob":
 		for _, hit := range parsePathHits(result) {
 			add(hit.path, "hit", false, nil, "")
 		}
+
 		if path, ok := input["path"].(string); ok && len(targets) == 0 {
 			add(path, "hit", true, nil, "")
 		}
 	case "Bash", "bash":
-		command := firstString(input, "command")
+		command := firstString(input, "command", "cmd", "_raw")
+
+		base := firstString(input, "workdir", "cwd")
 		for _, path := range commandReadPaths(command) {
-			add(path, "read", true, nil, "")
+			add(path, "read", true, nil, base)
 		}
+
 		for _, path := range extractCommandPaths(command) {
-			add(path, "hit", true, nil, "")
+			add(path, "hit", true, nil, base)
 		}
+
 		for _, path := range extractPaths(command + "\n" + result) {
-			add(path, "hit", true, nil, "")
+			add(path, "hit", true, nil, base)
+		}
+
+		for _, t := range gitDiffTargets(result) {
+			add(t.path, "read", true, t.lines, base)
 		}
 	case "exec_command":
 		command := firstString(input, "cmd", "command")
+
 		base := firstString(input, "workdir")
 		for _, path := range commandReadPaths(command) {
 			add(path, "read", true, nil, base)
 		}
+
 		for _, path := range extractCommandPaths(command) {
 			add(path, "hit", true, nil, base)
 		}
+
 		for _, path := range extractPaths(command + "\n" + result) {
 			add(path, "hit", true, nil, base)
 		}
+
 		for _, hit := range parsePathHits(result) {
 			add(hit.path, "hit", true, hit.lines, base)
+		}
+
+		for _, t := range gitDiffTargets(result) {
+			add(t.path, "read", true, t.lines, base)
 		}
 	case "exec":
 		for _, command := range execCommands(input) {
 			for _, path := range commandReadPaths(command.command) {
 				add(path, "read", true, nil, command.workdir)
 			}
+
 			for _, path := range extractCommandPaths(command.command) {
 				add(path, "hit", true, nil, command.workdir)
 			}
+
 			for _, path := range extractPaths(command.command) {
 				add(path, "hit", true, nil, command.workdir)
 			}
@@ -410,9 +664,15 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		for _, path := range extractPaths(result) {
 			add(path, "hit", true, nil, "")
 		}
+
 		for _, hit := range parsePathHits(result) {
 			add(hit.path, "hit", true, hit.lines, "")
 		}
+
+		for _, t := range gitDiffTargets(result) {
+			add(t.path, "read", true, t.lines, "")
+		}
+
 		for _, path := range execPatchPaths(input) {
 			add(path, "edit", false, nil, "")
 		}
@@ -430,7 +690,32 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		for _, path := range extractPaths(code + "\n" + result) {
 			add(path, "hit", true, nil, "")
 		}
+	case "view":
+		// Crush's view tool uses {file_path, start_line?, end_line?};
+		// the JSON literal stored in parts[].data.input occasionally
+		// nests an extra wrapper, but normalizePath tolerates any
+		// plain string we surface here.
+		if path, ok := input["file_path"].(string); ok {
+			add(path, "read", false, readLines(input), "")
+		}
+
+		if path, ok := input["path"].(string); ok {
+			add(path, "read", false, nil, "")
+		}
+	case "lsp_definition", "lsp_references", "lsp_symbols", "lsp_call_hierarchy":
+		// LSP lookup results carry the target path in the result body;
+		// mine it the same way parsePathHits does for Grep.
+		for _, hit := range parsePathHits(result) {
+			add(hit.path, "hit", false, hit.lines, "")
+		}
+	case "fetch", "agentic_fetch", "web_fetch":
+		// Fetch tools return URL-only payloads — there is no path to
+		// target. Leaving targets empty keeps the citymap free of
+		// spurious hits while the action still surfaces as "read".
+	case "download":
+		// Download targets a remote URL too; nothing to anchor.
 	}
+
 	return targets, outside
 }
 
@@ -440,6 +725,7 @@ func firstString(input map[string]any, keys ...string) string {
 			return value
 		}
 	}
+
 	return ""
 }
 
@@ -451,8 +737,13 @@ type execCommand struct {
 // execStringFieldRe recognizes only JSON-compatible double-quoted string
 // literals assigned to cmd or workdir. It intentionally does not attempt to
 // parse arbitrary JavaScript expressions.
-var execStringFieldRe = regexp.MustCompile(`(?:^|[[:space:],{])(?:"(cmd|workdir)"|(cmd|workdir))\s*:\s*("(?:\\.|[^"\\])*")`)
-var execPatchAssignmentRe = regexp.MustCompile(`(?m)^[\t ]*(?:const|let|var)[\t ]+patch[\t ]*=[\t ]*("(?:\\.|[^"\\])*")[\t ]*;`)
+var execStringFieldRe = regexp.MustCompile(
+	`(?:^|[[:space:],{])(?:"(cmd|workdir)"|(cmd|workdir))\s*:\s*("(?:\\.|[^"\\])*")`,
+)
+
+var execPatchAssignmentRe = regexp.MustCompile(
+	`(?m)^[\t ]*(?:const|let|var)[\t ]+patch[\t ]*=[\t ]*("(?:\\.|[^"\\])*")[\t ]*;`,
+)
 
 func execSource(input map[string]any) string {
 	for _, key := range []string{"_raw", "code", "script"} {
@@ -460,6 +751,7 @@ func execSource(input map[string]any) string {
 			return candidate
 		}
 	}
+
 	return ""
 }
 
@@ -468,15 +760,18 @@ func execHasOnlyStaticCommands(input map[string]any, commandCount int) bool {
 	if source == "" {
 		return firstString(input, "cmd", "command") != ""
 	}
+
 	tools := execToolNames(source)
 	if len(tools) != commandCount {
 		return false
 	}
+
 	for _, tool := range tools {
 		if tool != "exec_command" {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -486,16 +781,19 @@ func execCommands(input map[string]any) []execCommand {
 		if command := firstString(input, "cmd", "command"); command != "" {
 			return []execCommand{{command: command, workdir: firstString(input, "workdir")}}
 		}
+
 		return nil
 	}
 
 	arguments := execCommandArguments(source)
+
 	commands := make([]execCommand, 0, len(arguments))
 	for _, argument := range arguments {
 		if command, ok := parseStaticExecCommand(argument); ok {
 			commands = append(commands, command)
 		}
 	}
+
 	return commands
 }
 
@@ -504,30 +802,37 @@ func execPatchPaths(input map[string]any) []string {
 	if source == "" {
 		return nil
 	}
+
 	match := execPatchAssignmentRe.FindStringSubmatch(source)
 	if len(match) != 2 {
 		return nil
 	}
+
 	var patch string
 	if json.Unmarshal([]byte(match[1]), &patch) != nil {
 		return nil
 	}
+
 	for _, argument := range execToolArguments(source, "apply_patch") {
 		if strings.TrimSpace(argument) == "patch" {
 			return parsePatchPaths(patch)
 		}
 	}
+
 	return nil
 }
 
 func parseStaticExecCommand(argument string) (execCommand, bool) {
 	var command execCommand
+
 	ambiguousWorkdir := false
+
 	for _, match := range execStringFieldRe.FindAllStringSubmatchIndex(argument, -1) {
 		keyStart, keyEnd := match[2], match[3]
 		if keyStart < 0 {
 			keyStart, keyEnd = match[4], match[5]
 		}
+
 		key := argument[keyStart:keyEnd]
 
 		var value string
@@ -539,19 +844,24 @@ func parseStaticExecCommand(argument string) (execCommand, bool) {
 			if command.command != "" {
 				return execCommand{}, false
 			}
+
 			command.command = value
+
 			continue
 		}
 
 		if command.workdir != "" {
 			ambiguousWorkdir = true
 			command.workdir = ""
+
 			continue
 		}
+
 		if !ambiguousWorkdir {
 			command.workdir = value
 		}
 	}
+
 	return command, command.command != ""
 }
 
@@ -561,72 +871,98 @@ func execCommandArguments(source string) []string {
 
 func execToolArguments(source, tool string) []string {
 	call := "tools." + tool
+
 	var arguments []string
+
 	for i := 0; i < len(source); {
 		if next, ok := skipJSIgnored(source, i); ok {
 			i = next
+
 			continue
 		}
+
 		if !strings.HasPrefix(source[i:], call) || (i > 0 && isJSIdentifierByte(source[i-1])) {
 			i++
+
 			continue
 		}
+
 		open := i + len(call)
 		for open < len(source) && isJSSpace(source[open]) {
 			open++
 		}
+
 		if open >= len(source) || source[open] != '(' {
 			i++
+
 			continue
 		}
+
 		close, ok := matchingJSParen(source, open)
 		if !ok {
 			break
 		}
+
 		arguments = append(arguments, source[open+1:close])
 		i = close + 1
 	}
+
 	return arguments
 }
 
 func execToolNames(source string) []string {
 	const prefix = "tools."
+
 	var names []string
+
 	for i := 0; i < len(source); {
 		if next, ok := skipJSIgnored(source, i); ok {
 			i = next
+
 			continue
 		}
+
 		if !strings.HasPrefix(source[i:], prefix) || (i > 0 && isJSIdentifierByte(source[i-1])) {
 			i++
+
 			continue
 		}
+
 		nameStart := i + len(prefix)
+
 		nameEnd := nameStart
 		for nameEnd < len(source) && isJSIdentifierByte(source[nameEnd]) {
 			nameEnd++
 		}
+
 		open := nameEnd
 		for open < len(source) && isJSSpace(source[open]) {
 			open++
 		}
+
 		if nameEnd == nameStart || open >= len(source) || source[open] != '(' {
 			i++
+
 			continue
 		}
+
 		names = append(names, source[nameStart:nameEnd])
 		i = open + 1
 	}
+
 	return names
 }
 
 func matchingJSParen(source string, open int) (int, bool) {
 	depth := 1
+
 	for i := open + 1; i < len(source); {
 		if next, ok := skipJSIgnored(source, i); ok {
 			i = next
+
 			continue
 		}
+
 		switch source[i] {
 		case '(':
 			depth++
@@ -636,8 +972,10 @@ func matchingJSParen(source string, open int) (int, bool) {
 				return i, true
 			}
 		}
+
 		i++
 	}
+
 	return 0, false
 }
 
@@ -645,31 +983,39 @@ func skipJSIgnored(source string, start int) (int, bool) {
 	if start >= len(source) {
 		return start, false
 	}
+
 	if quote := source[start]; quote == '\'' || quote == '"' || quote == '`' {
 		for i := start + 1; i < len(source); i++ {
 			if source[i] == '\\' {
 				i++
+
 				continue
 			}
+
 			if source[i] == quote {
 				return i + 1, true
 			}
 		}
+
 		return len(source), true
 	}
+
 	if source[start] != '/' || start+1 >= len(source) {
 		return start, false
 	}
+
 	switch source[start+1] {
 	case '/':
 		if end := strings.IndexByte(source[start+2:], '\n'); end >= 0 {
 			return start + 2 + end + 1, true
 		}
+
 		return len(source), true
 	case '*':
 		if end := strings.Index(source[start+2:], "*/"); end >= 0 {
 			return start + 2 + end + 2, true
 		}
+
 		return len(source), true
 	default:
 		return start, false
@@ -688,20 +1034,25 @@ func repoPathExists(cwd, rel string) bool {
 	if cwd == "" || rel == "" {
 		return false
 	}
+
 	abs := filepath.Join(cwd, filepath.FromSlash(rel))
 	_, err := os.Stat(abs)
+
 	return err == nil
 }
 
 func readLines(input map[string]any) [][2]int {
 	offset := IntFromAny(input["offset"])
 	limit := IntFromAny(input["limit"])
+
 	if offset <= 0 {
 		return nil
 	}
+
 	if limit <= 0 {
 		return [][2]int{{offset, offset}}
 	}
+
 	return [][2]int{{offset, offset + limit - 1}}
 }
 
@@ -710,14 +1061,17 @@ func normalizePath(cwd, base, path string) (string, *model.OutsideTouch, bool) {
 	if path == "" || strings.Contains(path, "\n") {
 		return "", nil, false
 	}
+
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return "", nil, false
 	}
+
 	if !filepath.IsAbs(path) {
 		clean := filepath.Clean(path)
 		if clean == "." || strings.HasPrefix(clean, "..") {
 			return "", nil, false
 		}
+
 		if base != "" && filepath.IsAbs(base) {
 			abs := filepath.Clean(filepath.Join(base, clean))
 			if cwd != "" {
@@ -726,10 +1080,13 @@ func normalizePath(cwd, base, path string) (string, *model.OutsideTouch, bool) {
 					return filepath.ToSlash(rel), nil, true
 				}
 			}
+
 			return "", &model.OutsideTouch{Scope: outsideScope(abs), Path: abs}, true
 		}
+
 		return filepath.ToSlash(clean), nil, true
 	}
+
 	abs := filepath.Clean(path)
 	if cwd != "" {
 		root := filepath.Clean(cwd)
@@ -737,6 +1094,7 @@ func normalizePath(cwd, base, path string) (string, *model.OutsideTouch, bool) {
 			return filepath.ToSlash(rel), nil, true
 		}
 	}
+
 	return "", &model.OutsideTouch{Scope: outsideScope(abs), Path: abs}, true
 }
 
@@ -747,9 +1105,11 @@ func outsideScope(path string) string {
 			return "home"
 		}
 	}
+
 	if strings.HasPrefix(path, os.TempDir()) || strings.HasPrefix(path, "/tmp") {
 		return "tmp"
 	}
+
 	return "other"
 }
 
@@ -758,104 +1118,253 @@ type pathHit struct {
 	lines [][2]int
 }
 
-var pathLineRe = regexp.MustCompile(`(?:^|[\s"'([])([A-Za-z0-9_./@+-]*[A-Za-z0-9_/@+-]\.[A-Za-z0-9][A-Za-z0-9._-]*):([0-9]+)`)
-var pathOnlyRe = regexp.MustCompile(`(?:^|[\s"'([])([./~A-Za-z0-9_@+-]*[/][A-Za-z0-9_./~@+-]*\.[A-Za-z0-9][A-Za-z0-9._-]*)(?:$|[\s"',)\]:;])`)
-var commandPathRe = regexp.MustCompile(`(?:^|[\s"'=])([./~A-Za-z0-9_@+-]+\.[A-Za-z0-9][A-Za-z0-9._-]*)(?:$|[\s"',)\]:;])`)
-var patchFileRe = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$`)
+var pathLineRe = regexp.MustCompile(
+	`(?:^|[\s"'([])([A-Za-z0-9_./@+-]*[A-Za-z0-9_/@+-]\.[A-Za-z0-9][A-Za-z0-9._-]*):([0-9]+)`,
+)
+
+var pathOnlyRe = regexp.MustCompile(
+	`(?:^|[\s"'([])([./~A-Za-z0-9_@+-]*[/][A-Za-z0-9_./~@+-]*\.[A-Za-z0-9][A-Za-z0-9._-]*)(?:$|[\s"',)\]:;])`,
+)
+
+var commandPathRe = regexp.MustCompile(
+	`(?:^|[\s"'=])([./~A-Za-z0-9_@+-]+\.[A-Za-z0-9][A-Za-z0-9._-]*)(?:$|[\s"',)\]:;])`,
+)
+
+var (
+	patchFileRe           = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$`)
+	gitDiffHeaderRe       = regexp.MustCompile(`(?m)^diff --git a/.+? b/(.+)$`)
+	gitDiffHeaderQuotedRe = regexp.MustCompile(`(?m)^diff --git "a/.+?" "b/(.+?)"$`)
+	gitDiffPlusRe         = regexp.MustCompile(`(?m)^\+\+\+ b/(.+)$`)
+	gitDiffPlusQuotedRe   = regexp.MustCompile(`(?m)^\+\+\+ "b/(.+?)"$`)
+	gitDiffHunkRe         = regexp.MustCompile(`(?m)^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
+)
 
 func parsePathHits(text string) []pathHit {
 	byPath := map[string][][2]int{}
+
 	for _, m := range pathLineRe.FindAllStringSubmatch(text, -1) {
 		line := 0
-		fmt.Sscanf(m[2], "%d", &line)
+
+		_, _ = fmt.Sscanf(m[2], "%d", &line)
 		if line > 0 {
 			if path, ok := cleanExtractedPath(m[1], true); ok {
 				byPath[path] = append(byPath[path], [2]int{line, line})
 			}
 		}
 	}
+
 	for _, p := range extractPaths(text) {
 		if _, ok := byPath[p]; !ok {
 			byPath[p] = nil
 		}
 	}
+
 	out := make([]pathHit, 0, len(byPath))
 	for path, lines := range byPath {
 		out = append(out, pathHit{path: path, lines: lines})
 	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].path < out[j].path })
+
 	return out
 }
 
 func extractPaths(text string) []string {
 	matches := pathOnlyRe.FindAllStringSubmatch(text, -1)
 	seen := map[string]bool{}
+
 	paths := make([]string, 0, len(matches))
 	for _, m := range matches {
 		path, ok := cleanExtractedPath(m[1], false)
 		if !ok {
 			continue
 		}
+
 		if path == "" || seen[path] || strings.Contains(path, "://") {
 			continue
 		}
+
 		seen[path] = true
 		paths = append(paths, path)
 	}
+
 	sort.Strings(paths)
+
 	return paths
 }
 
 func extractCommandPaths(command string) []string {
 	matches := commandPathRe.FindAllStringSubmatch(command, -1)
 	seen := map[string]bool{}
+
 	paths := make([]string, 0, len(matches))
 	for _, m := range matches {
 		path, ok := cleanExtractedPath(m[1], true)
 		if !ok || seen[path] {
 			continue
 		}
+
 		seen[path] = true
 		paths = append(paths, path)
 	}
+
 	sort.Strings(paths)
+
 	return paths
 }
 
 func parsePatchPaths(patch string) []string {
 	matches := patchFileRe.FindAllStringSubmatch(patch, -1)
 	seen := map[string]bool{}
+
 	paths := make([]string, 0, len(matches))
 	for _, m := range matches {
 		raw := m[1]
 		if raw == "" {
 			raw = m[2]
 		}
+
 		path, ok := cleanExtractedPath(raw, true)
 		if !ok || seen[path] {
 			continue
 		}
+
 		seen[path] = true
 		paths = append(paths, path)
 	}
+
 	sort.Strings(paths)
+
 	return paths
+}
+
+// diffTarget carries a diff-extracted path and the hunk line ranges
+// associated with it, so callers can populate model.Target.Lines.
+type diffTarget struct {
+	path  string
+	lines [][2]int
+}
+
+// gitDiffTargets extracts current ("b/") paths from unified diff output and
+// the hunk line ranges under each file. It handles three header forms:
+//
+//   - `diff --git a/old b/new` — the standard git header (primary).
+//   - `diff --git "a/old name" "b/new name"` — git quotes paths with spaces.
+//   - `+++ b/new` — a fallback for headerless diffs (e.g. `diff -u` output).
+//
+// Hunk headers (`@@ -o,n +s,n @@`) are associated with the current file and
+// turned into [start, start+count-1] line ranges. Structural parsing is more
+// reliable than the generic extractPaths regex, which leaves diff paths as
+// weak "hit" targets indistinguishable from unvisited files in the citymap.
+func gitDiffTargets(text string) []diffTarget {
+	seen := map[string]int{} // path → index into result
+
+	var (
+		result      []diffTarget
+		currentPath string
+	)
+	// currentHasDiffGit tracks whether the current file section was
+	// introduced by a diff --git header. When true, the +++ fallback
+	// for the same section is suppressed. When a new section starts
+	// (via --- or a new diff --git), the flag resets. This prevents
+	// a single diff --git from suppressing +++ headers for unrelated
+	// headerless files later in the same output.
+	currentHasDiffGit := false
+
+	ensure := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" || path == "/dev/null" {
+			return
+		}
+
+		if _, ok := seen[path]; ok {
+			return
+		}
+
+		seen[path] = len(result)
+		result = append(result, diffTarget{path: path})
+	}
+
+	for raw := range strings.SplitSeq(text, "\n") {
+		if m := gitDiffHeaderRe.FindStringSubmatch(raw); m != nil {
+			currentHasDiffGit = true
+			currentPath = strings.TrimSpace(m[1])
+			ensure(currentPath)
+
+			continue
+		}
+
+		if m := gitDiffHeaderQuotedRe.FindStringSubmatch(raw); m != nil {
+			currentHasDiffGit = true
+			currentPath = strings.TrimSpace(m[1])
+			ensure(currentPath)
+
+			continue
+		}
+		// A --- line starts a new file section in headerless diffs.
+		// Reset the per-file flag so the following +++ is honoured.
+		if strings.HasPrefix(raw, "--- ") {
+			currentHasDiffGit = false
+
+			continue
+		}
+
+		if m := gitDiffPlusRe.FindStringSubmatch(raw); m != nil {
+			if !currentHasDiffGit {
+				currentPath = strings.TrimSpace(m[1])
+				ensure(currentPath)
+			}
+
+			continue
+		}
+
+		if m := gitDiffPlusQuotedRe.FindStringSubmatch(raw); m != nil {
+			if !currentHasDiffGit {
+				currentPath = strings.TrimSpace(m[1])
+				ensure(currentPath)
+			}
+
+			continue
+		}
+
+		if m := gitDiffHunkRe.FindStringSubmatch(raw); m != nil && currentPath != "" {
+			start, _ := strconv.Atoi(m[1])
+
+			count := 1
+			if m[2] != "" {
+				count, _ = strconv.Atoi(m[2])
+			}
+
+			if count > 0 {
+				idx := seen[currentPath]
+				result[idx].lines = append(result[idx].lines, [2]int{start, start + count - 1})
+			}
+		}
+	}
+
+	sort.Slice(result, func(i, j int) bool { return result[i].path < result[j].path })
+
+	return result
 }
 
 func cleanExtractedPath(path string, allowTopLevel bool) (string, bool) {
 	path = strings.TrimSpace(strings.Trim(path, `"' ,;:()[]{}`))
 	path = strings.TrimPrefix(path, "a/")
 	path = strings.TrimPrefix(path, "b/")
+
 	path = strings.TrimPrefix(path, "./")
 	if path == "" || strings.Contains(path, "://") || strings.ContainsAny(path, "\n\r\t") {
 		return "", false
 	}
+
 	if strings.HasPrefix(path, "--") || strings.HasPrefix(path, "++") {
 		return "", false
 	}
+
 	if !allowTopLevel && !strings.Contains(path, "/") {
 		return "", false
 	}
+
 	return path, true
 }
 
@@ -878,8 +1387,10 @@ var readOnlyPrograms = map[string]bool{
 // at least one segment actually searches or lists. Conservative by design —
 // anything unrecognized stays "exec".
 func searchCommand(command string) bool {
-	cleaned := strings.NewReplacer("2>&1", " ", "2>/dev/null", " ", ">/dev/null", " ", "> /dev/null", " ").Replace(command)
+	cleaned := strings.NewReplacer("2>&1", " ", "2>/dev/null", " ", ">/dev/null", " ", "> /dev/null", " ").
+		Replace(command)
 	searched := false
+
 	segments := strings.FieldsFunc(cleaned, func(r rune) bool {
 		return r == '|' || r == ';' || r == '&' || r == '\n'
 	})
@@ -887,30 +1398,39 @@ func searchCommand(command string) bool {
 		if strings.ContainsRune(segment, '>') {
 			return false
 		}
+
 		fields := strings.Fields(segment)
 		for len(fields) > 0 && envAssignRe.MatchString(fields[0]) {
 			fields = fields[1:]
 		}
+
 		if len(fields) == 0 {
 			continue
 		}
+
 		program := strings.ToLower(filepath.Base(fields[0]))
 		if program == "git" && len(fields) > 1 && (fields[1] == "grep" || fields[1] == "ls-files") {
 			searched = true
+
 			continue
 		}
+
 		if searchPrograms[program] {
 			// find can mutate through -exec/-delete; keep those out of "search"
 			if strings.Contains(segment, "-exec") || strings.Contains(segment, "-delete") {
 				return false
 			}
+
 			searched = true
+
 			continue
 		}
+
 		if !readOnlyPrograms[program] {
 			return false
 		}
 	}
+
 	return searched
 }
 
@@ -926,7 +1446,10 @@ func readCommand(command string) bool {
 	if len(commandReadPaths(command)) == 0 {
 		return false
 	}
-	cleaned := strings.NewReplacer("2>&1", " ", "2>/dev/null", " ", ">/dev/null", " ", "> /dev/null", " ").Replace(command)
+
+	cleaned := strings.NewReplacer("2>&1", " ", "2>/dev/null", " ", ">/dev/null", " ", "> /dev/null", " ").
+		Replace(command)
+
 	segments := strings.FieldsFunc(cleaned, func(r rune) bool {
 		return r == '|' || r == ';' || r == '&' || r == '\n'
 	})
@@ -934,21 +1457,26 @@ func readCommand(command string) bool {
 		if strings.ContainsRune(segment, '>') {
 			return false
 		}
+
 		fields := strings.Fields(segment)
 		for len(fields) > 0 && envAssignRe.MatchString(fields[0]) {
 			fields = fields[1:]
 		}
+
 		if len(fields) == 0 {
 			continue
 		}
+
 		program := strings.ToLower(filepath.Base(fields[0]))
 		if program == "sed" && !sedReadsOnly(fields[1:]) {
 			return false
 		}
+
 		if !readOnlyPrograms[program] && !readPrograms[program] {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -957,7 +1485,9 @@ func readCommand(command string) bool {
 // of opening a file to read it.
 func commandReadPaths(command string) []string {
 	seen := map[string]bool{}
+
 	var paths []string
+
 	segments := strings.FieldsFunc(command, func(r rune) bool {
 		return r == '|' || r == ';' || r == '&' || r == '\n'
 	})
@@ -965,66 +1495,85 @@ func commandReadPaths(command string) []string {
 		if strings.ContainsRune(segment, '>') {
 			continue
 		}
+
 		fields := strings.Fields(segment)
 		for len(fields) > 0 && envAssignRe.MatchString(fields[0]) {
 			fields = fields[1:]
 		}
+
 		if len(fields) == 0 {
 			continue
 		}
+
 		program := strings.ToLower(filepath.Base(fields[0]))
 		if !readPrograms[program] {
 			continue
 		}
+
 		args := fields[1:]
 		scriptArgs := 0
+
 		if program == "sed" {
 			// only the read idiom: sed -n '…p' file — anything else can rewrite
 			if !sedReadsOnly(args) {
 				continue
 			}
+
 			scriptArgs = 1
 		}
+
 		expectValue := false
 		for _, arg := range args {
 			if expectValue {
 				expectValue = false
+
 				continue
 			}
+
 			if strings.HasPrefix(arg, "-") {
 				expectValue = flagTakesValue(program, arg)
+
 				continue
 			}
+
 			if scriptArgs > 0 {
 				scriptArgs--
+
 				continue
 			}
 			// globs, redirections, and substitutions are not literal file paths
 			if strings.ContainsAny(arg, "<>*?$`") {
 				continue
 			}
+
 			path, ok := cleanExtractedPath(arg, true)
 			if !ok || seen[path] {
 				continue
 			}
+
 			seen[path] = true
 			paths = append(paths, path)
 		}
 	}
+
 	sort.Strings(paths)
+
 	return paths
 }
 
 func sedReadsOnly(args []string) bool {
 	hasN := false
+
 	for _, arg := range args {
 		if arg == "-n" {
 			hasN = true
 		}
+
 		if strings.HasPrefix(arg, "-i") {
 			return false
 		}
 	}
+
 	return hasN
 }
 
@@ -1035,17 +1584,31 @@ func flagTakesValue(program, flag string) bool {
 	case "sed":
 		return flag == "-e" || flag == "-f"
 	}
+
 	return false
 }
 
 func verifyCommand(command string) bool {
 	c := strings.ToLower(command)
-	patterns := []string{"go test", "go vet", "npm test", "npm run build", "pnpm test", "pnpm build", "pytest", "make test", "cargo test", "swift test"}
+
+	patterns := []string{
+		"go test",
+		"go vet",
+		"npm test",
+		"npm run build",
+		"pnpm test",
+		"pnpm build",
+		"pytest",
+		"make test",
+		"cargo test",
+		"swift test",
+	}
 	for _, pattern := range patterns {
 		if strings.Contains(c, pattern) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1057,37 +1620,50 @@ const toolSummaryVerbLimit = 96
 func summarizeExecWrapper(input map[string]any) string {
 	commands := execCommands(input)
 	source := execSource(input)
+
 	nestedTools := execToolNames(source)
 	if len(commands) == 0 && len(nestedTools) == 0 {
 		return ""
 	}
 
-	primary := ""
+	var primary string
 	if len(commands) > 0 {
 		primary = commands[0].command
 	} else {
 		primary = nestedTools[0]
 	}
+
 	additionalCalls := len(commands) - 1
 	if len(nestedTools) > 0 {
 		additionalCalls = len(nestedTools) - 1
 	}
 
 	suffix := ""
-	if additionalCalls == 1 {
-		suffix = " (+1 more tool call)"
-	} else if additionalCalls > 1 {
-		suffix = fmt.Sprintf(" (+%d more tool calls)", additionalCalls)
+	if additionalCalls > 0 {
+		suffix = fmt.Sprintf(
+			" (+%d more tool %s)",
+			additionalCalls,
+			english.PluralWord(additionalCalls, "call", "calls"),
+		)
 	}
+
 	commandLimit := toolSummaryVerbLimit - len([]rune(suffix))
+
 	return textutil.TruncateRunes(primary, commandLimit, "...") + suffix
 }
 
-func SummarizeTool(tool string, input map[string]any, targets []model.Target, outside []model.OutsideTouch, isError bool) string {
+func SummarizeTool(
+	tool string,
+	input map[string]any,
+	targets []model.Target,
+	outside []model.OutsideTouch,
+	isError bool,
+) string {
 	verb := tool
 	if desc, ok := input["description"].(string); ok && desc != "" {
 		verb = desc
 	}
+
 	if command := firstString(input, "command", "cmd"); command != "" {
 		verb = textutil.TruncateRunes(command, toolSummaryVerbLimit, "...")
 	} else if tool == "exec" {
@@ -1095,9 +1671,11 @@ func SummarizeTool(tool string, input map[string]any, targets []model.Target, ou
 			verb = summary
 		}
 	}
+
 	status := ""
 	if isError {
 		status = " error"
 	}
+
 	return fmt.Sprintf("%s -> %d targets, %d outside%s", verb, len(targets), len(outside), status)
 }
