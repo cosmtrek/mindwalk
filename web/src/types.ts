@@ -24,12 +24,17 @@ export interface SessionMeta {
   path: string;
   cwd?: string;
   model?: string;
+  provider?: string;
   gitBranch?: string;
   startedAt?: string;
   endedAt?: string;
   eventCount: number;
   /** user-turn count; with eventCount, the badge's cheap staleness signal */
   userTurns?: number;
+  /** session-level token economics from the harness's session table */
+  promptTokens?: number;
+  completionTokens?: number;
+  cost?: number;
   /** evaluation state for the rail badge; absent when never evaluated */
   reportState?: "running" | "done" | "stale" | "failed";
 }
@@ -44,6 +49,7 @@ export type AgentLinkMethod =
   | "codex-parent-thread-id"
   | "claude-tool-use-id"
   | "claude-subagents-directory"
+  | "crush-agent-id"
   | "unavailable";
 
 export interface AgentGraph {
@@ -120,6 +126,7 @@ export interface Trace {
     id: string;
     harness: string;
     model?: string;
+    provider?: string;
     title?: string;
     cwd?: string;
     commit?: string;
@@ -144,6 +151,8 @@ export interface TraceEvent {
   isError: boolean;
   outcomeKnown?: boolean;
   summary: string;
+  /** true when the tool was executed server-side by the model provider */
+  providerExecuted?: boolean;
 }
 
 export interface Target {
@@ -161,8 +170,9 @@ export interface OutsideTouch {
 
 export interface Mark {
   seq: number;
-  type: "compaction" | "user-message" | "subagent";
+  type: "compaction" | "user-message" | "subagent" | "thinking" | "finish-reason" | "model-switch";
   note?: string;
+  duration?: number;
 }
 
 export interface Stats {

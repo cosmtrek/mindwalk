@@ -29,6 +29,10 @@ type Options struct {
 	// rubric whose task digest still matches is reused instead of regenerated,
 	// so criteria stay stable across re-evaluations.
 	CachedReport *model.Report
+	// OnProgress, if set, receives a step-level update at each pipeline
+	// milestone (rubric skip/reuse/generate, scoring, done/error). The server
+	// streams these to the browser via SSE; tests and the CLI leave it nil.
+	OnProgress func(Progress)
 }
 
 // Analyze runs the judge over one trace and returns the evaluation report.
@@ -50,14 +54,19 @@ func Analyze(ctx context.Context, trace *model.Trace, opts Options) (*model.Repo
 		runner = CLIRunner{CLI: cli, Model: opts.Model}
 	}
 
+	emitProgress(opts.OnProgress, ProgressStart)
+
 	input := BuildInput(trace)
 	var rubric *model.Rubric
 	if !opts.NoRubric {
-		acquired, err := acquireRubric(ctx, runner, trace, opts.CachedReport)
+		acquired, err := acquireRubric(ctx, runner, trace, opts.CachedReport, opts.OnProgress)
 		if err != nil {
+			emitProgress(opts.OnProgress, Progress{Phase: "error", Step: "fail", Message: err.Error()})
 			return nil, err
 		}
 		rubric = acquired
+	} else {
+		emitProgress(opts.OnProgress, Progress{Phase: "rubric", Step: "skip", Message: "Rubric layer disabled"})
 	}
 	sysPrompt, scoringInput := prompt, input
 	if rubric != nil && rubric.Status == model.RubricStatusScored {
@@ -65,15 +74,19 @@ func Analyze(ctx context.Context, trace *model.Trace, opts Options) (*model.Repo
 		scoringInput = "# RUBRIC (data)\n\n" + scoringRubricJSON(rubric) + "\n\n# SESSION\n\n" + input
 	}
 
+	emitProgress(opts.OnProgress, Progress{Phase: "scoring", Step: "score", Message: "Scoring session against dimensions and criteria…"})
+
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		result, err := runner.Run(ctx, sysPrompt, scoringInput)
 		if err != nil {
+			emitProgress(opts.OnProgress, Progress{Phase: "error", Step: "fail", Message: err.Error()})
 			return nil, err
 		}
 		report, err := parseOutput(result.Text, trace, rubric)
 		if err != nil {
 			lastErr = err
+			emitProgress(opts.OnProgress, Progress{Phase: "scoring", Step: "retry", Message: "Judge output invalid, retrying…"})
 			continue
 		}
 		// Prefer the model the CLI says it used; fall back to what was asked
@@ -93,8 +106,10 @@ func Analyze(ctx context.Context, trace *model.Trace, opts Options) (*model.Repo
 		if report.Rubric != nil && report.Rubric.Status == model.RubricStatusScored {
 			report.Judge.RubricPromptVersion = RubricPromptVersion
 		}
+		emitProgress(opts.OnProgress, Progress{Phase: "done", Step: "complete", Message: "Evaluation complete"})
 		return report, nil
 	}
+	emitProgress(opts.OnProgress, Progress{Phase: "error", Step: "fail", Message: "judge output invalid after retry"})
 	return nil, fmt.Errorf("judge output invalid after retry: %w", lastErr)
 }
 

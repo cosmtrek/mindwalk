@@ -66,3 +66,17 @@ func TestTruncateFailureDetailRepairsInvalidUTF8(t *testing.T) {
 		t.Fatalf("failure detail contains invalid UTF-8: %q", got)
 	}
 }
+
+func TestCrushModelReadsVerboseLog(t *testing.T) {
+	raw := "INFO Running in non-interactive mode\n" +
+		"INFO Created session for non-interactive run session_id=abc\n" +
+		"INFO ModelProvider called provider=zai model=glm-5.2\n" +
+		"INFO Skill turn summary component=skills\n"
+	if got := crushModel(raw); got != "glm-5.2" {
+		t.Fatalf("model = %q, want glm-5.2", got)
+	}
+
+	if got := crushModel("no model provider line at all"); got != "" {
+		t.Fatalf("expected empty model, got %q", got)
+	}
+}

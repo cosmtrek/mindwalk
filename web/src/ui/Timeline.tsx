@@ -36,7 +36,10 @@ const MARK_SLOTS = 220;
 const MARK_LABEL: Record<Mark["type"], string> = {
   compaction: "context compaction",
   "user-message": "user message",
-  subagent: "subagent"
+  subagent: "subagent",
+  thinking: "agent thinking",
+  "finish-reason": "turn ended",
+  "model-switch": "model switched"
 };
 
 const STRIP_ACTIONS: Action[] = ["search", "read", "edit", "verify", "exec"];

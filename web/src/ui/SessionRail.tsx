@@ -300,6 +300,8 @@ function harnessLabel(harness: string): string {
   switch (harness) {
     case "claude-code":
       return "claude";
+    case "crush":
+      return "crush";
     default:
       return harness;
   }

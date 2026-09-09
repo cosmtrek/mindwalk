@@ -22,23 +22,28 @@ func TestComputeStatsFactCounters(t *testing.T) {
 		},
 	}
 
-	stats := ComputeStats(trace, 10, ObservabilityExact)
+	stats := ComputeStats(trace, 10, ObservabilitySignals{Errors: ObservabilityExact})
 
 	if stats.Actions != (ActionCounts{Search: 1, Read: 1, Edit: 4, Exec: 1, Verify: 1}) {
 		t.Fatalf("actions = %#v", stats.Actions)
 	}
+
 	if stats.Errors != (ActionCounts{Edit: 1, Exec: 1}) {
 		t.Fatalf("errors = %#v", stats.Errors)
 	}
+
 	if stats.MaxEditsPerFile != 3 || stats.ChurnFiles != 1 {
 		t.Fatalf("maxEditsPerFile = %d, churnFiles = %d", stats.MaxEditsPerFile, stats.ChurnFiles)
 	}
+
 	if stats.UserTurns != 2 || stats.Compactions != 1 || stats.Subagents != 1 {
 		t.Fatalf("marks = %d/%d/%d", stats.UserTurns, stats.Compactions, stats.Subagents)
 	}
+
 	if stats.ResultBytes != 30 {
 		t.Fatalf("resultBytes = %d", stats.ResultBytes)
 	}
+
 	if stats.EditsAfterLastVerify != 1 {
 		t.Fatalf("editsAfterLastVerify = %d", stats.EditsAfterLastVerify)
 	}
@@ -51,7 +56,11 @@ func TestComputeStatsEditsAfterLastVerifyWithoutVerify(t *testing.T) {
 			{Seq: 1, Action: "edit", Targets: []Target{{Path: "b.go", Touch: "edit"}}},
 		},
 	}
-	if stats := ComputeStats(trace, 0, ObservabilityExact); stats.EditsAfterLastVerify != 2 {
+	if stats := ComputeStats(
+		trace,
+		0,
+		ObservabilitySignals{Errors: ObservabilityExact},
+	); stats.EditsAfterLastVerify != 2 {
 		t.Fatalf("editsAfterLastVerify = %d", stats.EditsAfterLastVerify)
 	}
 }
@@ -71,18 +80,53 @@ func TestComputeStatsObservability(t *testing.T) {
 		wantErrors  string
 	}{
 		{"strong reads are exact", []Event{strongRead}, ObservabilityExact, ObservabilityExact, ObservabilityExact},
-		{"any weak read downgrades", []Event{strongRead, weakRead}, ObservabilityExact, ObservabilityEstimated, ObservabilityExact},
-		{"unknown outcome downgrades exact errors", []Event{strongRead, pending}, ObservabilityExact, ObservabilityExact, ObservabilityEstimated},
-		{"legacy failure remains known", []Event{legacyFailure}, ObservabilityExact, ObservabilityUnavailable, ObservabilityExact},
-		{"no reads is unavailable", []Event{hitOnly}, ObservabilityEstimated, ObservabilityUnavailable, ObservabilityEstimated},
-		{"empty error signal falls back to estimated", []Event{strongRead}, "", ObservabilityExact, ObservabilityEstimated},
+		{
+			"any weak read downgrades",
+			[]Event{strongRead, weakRead},
+			ObservabilityExact,
+			ObservabilityEstimated,
+			ObservabilityExact,
+		},
+		{
+			"unknown outcome downgrades exact errors",
+			[]Event{strongRead, pending},
+			ObservabilityExact,
+			ObservabilityExact,
+			ObservabilityEstimated,
+		},
+		{
+			"legacy failure remains known",
+			[]Event{legacyFailure},
+			ObservabilityExact,
+			ObservabilityUnavailable,
+			ObservabilityExact,
+		},
+		{
+			"no reads is unavailable",
+			[]Event{hitOnly},
+			ObservabilityEstimated,
+			ObservabilityUnavailable,
+			ObservabilityEstimated,
+		},
+		{
+			"empty error signal falls back to estimated",
+			[]Event{strongRead},
+			"",
+			ObservabilityExact,
+			ObservabilityEstimated,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stats := ComputeStats(&Trace{Events: tt.events}, 0, tt.errorSignal)
+			stats := ComputeStats(&Trace{Events: tt.events}, 0, ObservabilitySignals{Errors: tt.errorSignal})
 			if stats.Observability.Reads != tt.wantReads || stats.Observability.Errors != tt.wantErrors {
-				t.Fatalf("observability = %#v, want reads %q errors %q", stats.Observability, tt.wantReads, tt.wantErrors)
+				t.Fatalf(
+					"observability = %#v, want reads %q errors %q",
+					stats.Observability,
+					tt.wantReads,
+					tt.wantErrors,
+				)
 			}
 		})
 	}

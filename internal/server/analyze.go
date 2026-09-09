@@ -30,6 +30,38 @@ type analyzeJob struct {
 	// rubric on/off). A concurrent request for the same session with a
 	// different configuration must conflict, not silently receive this run.
 	config string
+	// progress holds the step-level events the judge emits during the run.
+	// A pointer so snapshot's copy-by-value stays safe — the mutex lives in
+	// the pointee, not the job.
+	progress *progressLog
+}
+
+// progressLog is a mutex-protected append-only log of judge progress events.
+// The analyze goroutine appends; the SSE handler tails via since.
+type progressLog struct {
+	mu   sync.Mutex
+	data []judge.Progress
+}
+
+func newProgressLog() *progressLog { return &progressLog{} }
+
+func (p *progressLog) append(evt judge.Progress) {
+	p.mu.Lock()
+	p.data = append(p.data, evt)
+	p.mu.Unlock()
+}
+
+// since returns all events with index >= start and the next index to pass
+// on the next call (0 for a fresh connection).
+func (p *progressLog) since(start int) ([]judge.Progress, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if start >= len(p.data) {
+		return nil, len(p.data)
+	}
+	events := make([]judge.Progress, len(p.data)-start)
+	copy(events, p.data[start:])
+	return events, len(p.data)
 }
 
 // jobConfig renders a request's evaluation configuration as the job identity.
@@ -124,7 +156,13 @@ func (s *Server) handleSessionReport(w http.ResponseWriter, r *http.Request, sel
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	writeJSON(w, s.buildReportStatus(meta, trace))
+}
 
+// buildReportStatus assembles the report status for a session from the
+// in-flight job (if any) and the on-disk cache. Shared by the polling
+// endpoint and the SSE stream's terminal event.
+func (s *Server) buildReportStatus(meta model.SessionMeta, trace *model.Trace) reportStatus {
 	status := reportStatus{State: "none"}
 	status.JudgeCLIs, status.JudgeAvailable = s.judgeInfo()
 	if status.JudgeAvailable {
@@ -149,7 +187,7 @@ func (s *Server) handleSessionReport(w http.ResponseWriter, r *http.Request, sel
 			status.Stale = !judge.FreshAgainstTrace(cached, trace)
 		}
 	}
-	writeJSON(w, status)
+	return status
 }
 
 func (s *Server) handleSessionAnalyze(w http.ResponseWriter, r *http.Request, selector string) {
@@ -223,7 +261,7 @@ func (s *Server) handleSessionAnalyze(w http.ResponseWriter, r *http.Request, se
 		http.Error(w, fmt.Sprintf("%d evaluations already running; wait for one to finish", maxConcurrentJudges), http.StatusTooManyRequests)
 		return
 	}
-	job := &analyzeJob{config: config}
+	job := &analyzeJob{config: config, progress: newProgressLog()}
 	s.analyze.jobs[meta.Key] = job
 	s.analyze.active++
 	s.analyze.mu.Unlock()
@@ -253,6 +291,7 @@ func (s *Server) runAnalyze(key string, trace *model.Trace, job *analyzeJob, cli
 		Model:        judgeModel,
 		NoRubric:     noRubric,
 		CachedReport: cached,
+		OnProgress:   job.progress.append,
 	})
 
 	// Persist before publishing done, and outside the lock: once the job entry

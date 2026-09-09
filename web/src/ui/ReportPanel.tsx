@@ -205,8 +205,8 @@ function PanelBody({
     if (!status.judgeAvailable) {
       return (
         <p className="report-note">
-          Evaluation needs a local agent CLI as judge. Install <code>claude</code> or <code>codex</code> and
-          make it available on PATH.
+          Evaluation needs a local agent CLI as judge. Install <code>claude</code>,{" "}
+          <code>codex</code>, or <code>crush</code> and make it available on PATH.
         </p>
       );
     }

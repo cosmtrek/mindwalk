@@ -1,14 +1,20 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -834,6 +840,9 @@ func TestFreshScanInvalidatesAgentGraphCache(t *testing.T) {
 	if _, err := s.agentGraph(root); err != nil {
 		t.Fatal(err)
 	}
+	// Clear disk cache so the fresh-scan invalidation test isolates
+	// the in-memory cache path.
+	_ = os.RemoveAll(agentGraphCacheDir())
 	requestSessions(t, s, "/api/sessions?fresh=1")
 	if _, err := s.agentGraph(root); err != nil {
 		t.Fatal(err)
@@ -1217,7 +1226,7 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 			Session: model.TraceSession{ID: id, Harness: "agent-api", Cwd: meta.Cwd, Path: meta.Path, EventCount: len(events)},
 			Events:  events,
 			Marks:   []model.Mark{},
-			Stats:   model.ComputeStats(&model.Trace{Events: events}, 1, model.ObservabilityExact),
+			Stats:   model.ComputeStats(&model.Trace{Events: events}, 1, model.ObservabilitySignals{Errors: model.ObservabilityExact}),
 		}
 	}
 	zeroMeta := metas[filepath.Clean(paths["child-zero"])]
@@ -1226,7 +1235,7 @@ func newAgentAPIServer(t *testing.T) (*Server, *agentAPISource) {
 		Session: model.TraceSession{ID: "child-zero", Harness: "agent-api", Cwd: zeroMeta.Cwd, Path: zeroMeta.Path, EventCount: 0},
 		Events:  []model.Event{},
 		Marks:   []model.Mark{},
-		Stats:   model.ComputeStats(&model.Trace{Events: []model.Event{}}, 1, model.ObservabilityExact),
+		Stats:   model.ComputeStats(&model.Trace{Events: []model.Event{}}, 1, model.ObservabilitySignals{Errors: model.ObservabilityExact}),
 	}
 	graphs := map[string]*model.AgentGraph{
 		"root-a": {
@@ -1385,5 +1394,425 @@ func TestSessionAgentsForSourceWithoutGraphSupport(t *testing.T) {
 	root := graph.Agents[0]
 	if root.Kind != model.AgentKindMain || root.TraceSessionKey != key || root.LinkMethod != model.AgentLinkMethodRoot || root.TraceEventCount != 1 {
 		t.Fatalf("root node = %#v", root)
+	}
+}
+
+func TestServerLoadsCrushFixtureSession(t *testing.T) {
+	crushDir := filepath.Join("..", "..", "testdata", "crush")
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), PiDir: filepath.Join(t.TempDir(), "no-pi"), CrushDir: crushDir})
+
+	sessionsResp := httptest.NewRecorder()
+	s.handleSessions(sessionsResp, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if sessionsResp.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d body=%s", sessionsResp.Code, sessionsResp.Body.String())
+	}
+	var sessions []model.SessionMeta
+	if err := json.Unmarshal(sessionsResp.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+	if sessions[0].ID != "fixture-root" || sessions[0].Harness != "crush" {
+		t.Fatalf("session = %+v", sessions[0])
+	}
+	rootKey := sessions[0].Key
+
+	traceResp := httptest.NewRecorder()
+	s.handleSessionResource(traceResp, httptest.NewRequest(http.MethodGet, "/api/sessions/"+url.PathEscape(rootKey)+"/trace", nil))
+	if traceResp.Code != http.StatusOK {
+		t.Fatalf("trace status = %d body=%s", traceResp.Code, traceResp.Body.String())
+	}
+	var trace model.Trace
+	if err := json.Unmarshal(traceResp.Body.Bytes(), &trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace.Session.Harness != "crush" {
+		t.Fatalf("harness = %q", trace.Session.Harness)
+	}
+	// Four events: agent (subagent), read, write, bash.
+	if len(trace.Events) != 4 {
+		t.Fatalf("events = %d, want 4 (agent + read + write + bash)", len(trace.Events))
+	}
+	if trace.Events[0].Tool != "agent" {
+		t.Fatalf("first event tool = %q, want agent", trace.Events[0].Tool)
+	}
+	// Three marks: two user-message + one subagent.
+	if len(trace.Marks) != 3 {
+		t.Fatalf("marks = %+v", trace.Marks)
+	}
+	sawUser, sawSub := 0, false
+	for _, m := range trace.Marks {
+		if m.Type == "user-message" {
+			sawUser++
+		}
+		if m.Type == "subagent" {
+			sawSub = true
+		}
+	}
+	if sawUser != 2 || !sawSub {
+		t.Fatalf("marks missing user/sub: %+v", trace.Marks)
+	}
+
+	agentsResp := httptest.NewRecorder()
+	s.handleSessionResource(agentsResp, httptest.NewRequest(http.MethodGet, "/api/sessions/"+url.PathEscape(rootKey)+"/agents", nil))
+	if agentsResp.Code != http.StatusOK {
+		t.Fatalf("agents status = %d body=%s", agentsResp.Code, agentsResp.Body.String())
+	}
+	var graph model.AgentGraph
+	if err := json.Unmarshal(agentsResp.Body.Bytes(), &graph); err != nil {
+		t.Fatal(err)
+	}
+	if graph.RootSessionKey != rootKey {
+		t.Fatalf("root key = %q, want %q", graph.RootSessionKey, rootKey)
+	}
+	if len(graph.Agents) != 2 {
+		t.Fatalf("agents = %d, want 2", len(graph.Agents))
+	}
+	var sub *model.AgentNode
+	for i := range graph.Agents {
+		if graph.Agents[i].Kind == model.AgentKindSubagent {
+			sub = &graph.Agents[i]
+			break
+		}
+	}
+	if sub == nil {
+		t.Fatalf("no subagent in graph: %+v", graph.Agents)
+	}
+	if sub.TraceAvailability != model.TraceAvailabilityAvailable {
+		t.Fatalf("trace availability = %q", sub.TraceAvailability)
+	}
+}
+
+// TestServerSkipsCrushWhenDisabled verifies the --no-crush flag
+// disables the Crush adapter so a vendored or hostile .crush
+// directory does not bleed into the session list.
+func TestServerSkipsCrushWhenDisabled(t *testing.T) {
+	crushDir := filepath.Join("..", "..", "testdata", "crush")
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), CrushDir: crushDir, DisableCrush: true})
+
+	sessionsResp := httptest.NewRecorder()
+	s.handleSessions(sessionsResp, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if sessionsResp.Code != http.StatusOK {
+		t.Fatalf("sessions status = %d", sessionsResp.Code)
+	}
+	var sessions []model.SessionMeta
+	if err := json.Unmarshal(sessionsResp.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range sessions {
+		if session.Harness == "crush" {
+			t.Fatalf("found Crush session %+v with DisableCrush=true", session)
+		}
+	}
+}
+
+// TestAdaptersEndpoint verifies the /api/adapters endpoint returns
+// every registered adapter with its harness name, session directory,
+// live session count, and agent-graph capability flag.
+func TestAdaptersEndpoint(t *testing.T) {
+	crushDir := filepath.Join("..", "..", "testdata", "crush")
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), PiDir: filepath.Join(t.TempDir(), "no-pi"), CrushDir: crushDir})
+
+	// Warm the scan so session counts are populated.
+	if _, err := s.listSessions(); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := httptest.NewRecorder()
+	s.handleAdapters(resp, httptest.NewRequest(http.MethodGet, "/api/adapters", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	var infos []adapterInfo
+	if err := json.Unmarshal(resp.Body.Bytes(), &infos); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]struct {
+		count      int
+		agentGraph bool
+	}{
+		"claude-code": {0, true},
+		"codex":       {0, true},
+		"pi":          {0, false},
+		"crush":       {1, true},
+	}
+	if len(infos) != len(want) {
+		t.Fatalf("adapter count = %d, want %d", len(infos), len(want))
+	}
+	for _, info := range infos {
+		expected, ok := want[info.Harness]
+		if !ok {
+			t.Fatalf("unexpected harness %q", info.Harness)
+		}
+		if info.SessionCount != expected.count {
+			t.Errorf("harness %q session count = %d, want %d", info.Harness, info.SessionCount, expected.count)
+		}
+		if info.AgentGraph != expected.agentGraph {
+			t.Errorf("harness %q agentGraph = %v, want %v", info.Harness, info.AgentGraph, expected.agentGraph)
+		}
+		if info.SessionDir == "" {
+			t.Errorf("harness %q has empty sessionDir", info.Harness)
+		}
+	}
+}
+
+// TestLoadTraceAndMapDoesNotGarbageRootCrushPaths is a regression test
+// for a bug where loadTraceAndMap fell back to filepath.Dir(meta.Path)
+// for crush:// sessions with no resolved Cwd: filepath.Dir produced
+// "crush:/session" — a garbage root that the citymap builder tried to
+// read, producing a broken map.
+func TestLoadTraceAndMapDoesNotGarbageRootCrushPaths(t *testing.T) {
+	crushPath := "crush://session/no-cwd-session"
+	meta := model.SessionMeta{
+		Key:     adapter.SessionKey("crush", crushPath),
+		ID:      "no-cwd-session",
+		Harness: "crush",
+		Path:    crushPath,
+	}
+	source := &singleCrushSource{
+		path: crushPath,
+		trace: &model.Trace{
+			Version: 1,
+			Session: model.TraceSession{ID: "no-cwd-session", Harness: "crush", Path: crushPath},
+			Events:  []model.Event{},
+			Marks:   []model.Mark{},
+		},
+		meta: meta,
+	}
+	s := New(Config{CrushDir: filepath.Join(t.TempDir(), "no-crush")})
+	s.adapters = []adapter.Source{source}
+	s.sessionCatalog = map[string]model.SessionMeta{meta.Key: meta}
+
+	trace, city, err := s.traceAndMapMeta(meta)
+	if err != nil {
+		t.Fatalf("traceAndMapMeta failed: %v", err)
+	}
+	if trace == nil {
+		t.Fatal("trace is nil")
+	}
+	if strings.HasPrefix(city.Repo.Root, "crush:") {
+		t.Fatalf("citymap root = %q (garbage from filepath.Dir on synthetic path)", city.Repo.Root)
+	}
+}
+
+type singleCrushSource struct {
+	path  string
+	trace *model.Trace
+	meta  model.SessionMeta
+}
+
+func (s *singleCrushSource) Harness() string    { return "crush" }
+func (s *singleCrushSource) SessionDir() string { return "" }
+func (s *singleCrushSource) ListSessions() ([]model.SessionMeta, error) {
+	return nil, nil
+}
+func (s *singleCrushSource) Summarize(path string) (model.SessionMeta, error) {
+	return s.meta, nil
+}
+func (s *singleCrushSource) Parse(path string) (*model.Trace, error) {
+	clone := *s.trace
+	return &clone, nil
+}
+
+// TestFingerprintAgentGraphInputsHandlesSyntheticCrushPaths is a
+// regression test for a bug where synthetic crush:// paths were treated
+// as filesystem locations by the fingerprint: os.Stat on a crush://
+// path produced an error or a "missing" entry that prevented the
+// fingerprint from reflecting the real input set, causing stale
+// agent-graph caches.
+func TestFingerprintAgentGraphInputsHandlesSyntheticCrushPaths(t *testing.T) {
+	crushPath := "crush://session/abc-123"
+	fp1, err := fingerprintAgentGraphInputs([]string{crushPath}, 1)
+	if err != nil {
+		t.Fatalf("fingerprint failed for crush:// path: %v", err)
+	}
+	fp2, err := fingerprintAgentGraphInputs([]string{crushPath}, 1)
+	if err != nil {
+		t.Fatalf("second fingerprint failed: %v", err)
+	}
+	if fp1.digest != fp2.digest {
+		t.Fatal("same inputs produced different fingerprints")
+	}
+	fp3, err := fingerprintAgentGraphInputs([]string{crushPath}, 2)
+	if err != nil {
+		t.Fatalf("fingerprint with different freshGen failed: %v", err)
+	}
+	// The digest excludes freshGen so disk cache keys survive restarts.
+	// The full fingerprint still differs because freshGen is a field.
+	if fp1.digest != fp3.digest {
+		t.Fatalf("different freshGen produced different digest (disk cache would not survive restart)")
+	}
+	if fp1 == fp3 {
+		t.Fatal("different freshGen produced identical fingerprint (stale in-memory cache)")
+	}
+}
+
+func TestEvictAgentGraphCacheN(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write three files with distinct sizes and staggered mod times so the
+	// eviction order (oldest-first) is deterministic.
+	files := []struct {
+		name string
+		data []byte
+		age  time.Duration // how old relative to "now"
+	}{
+		{"oldest.json", make([]byte, 40), 3 * time.Hour},
+		{"middle.json", make([]byte, 40), 2 * time.Hour},
+		{"newest.json", make([]byte, 40), 1 * time.Hour},
+	}
+	now := time.Now()
+	for _, f := range files {
+		path := filepath.Join(dir, f.name)
+		if err := os.WriteFile(path, f.data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mtime := now.Add(-f.age)
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Threshold: 40+40=80 is under 100, but 40+40+40=120 exceeds it.
+	// The oldest file should be evicted, leaving the two newer files.
+	evictAgentGraphCacheN(dir, 100)
+
+	remaining, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range remaining {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	want := []string{"middle.json", "newest.json"}
+	if len(names) != len(want) {
+		t.Fatalf("after eviction: %v files remain (%v), want %v", len(names), names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("remaining[%d] = %q, want %q (all: %v)", i, names[i], want[i], names)
+		}
+	}
+}
+
+func TestEvictAgentGraphCacheNUnderCap(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.json"), make([]byte, 10), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Total (10 B) is well under the threshold (1000 B) — nothing evicted.
+	evictAgentGraphCacheN(dir, 1000)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file to survive, got %d", len(entries))
+	}
+}
+
+// TestAgentGraphCacheConcurrentEvictionUnderLoad exercises the
+// in-memory LRU eviction from many goroutines at once: the cache must
+// stay bounded without losing entries to a data race.
+func TestAgentGraphCacheConcurrentEvictionUnderLoad(t *testing.T) {
+	const (
+		writers         = 8
+		insertsPerWrite = 64 // 8 * 64 = 512 > agentGraphMaxEntries
+	)
+
+	srv := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), PiDir: filepath.Join(t.TempDir(), "no-pi")})
+
+	var waitGroup sync.WaitGroup
+
+	waitGroup.Add(writers)
+
+	for workerID := range writers {
+		go func(workerID int) {
+			defer waitGroup.Done()
+
+			for i := range insertsPerWrite {
+				key := fmt.Sprintf("w%d-k%d", workerID, i)
+
+				srv.mu.Lock()
+				srv.agentGraphs[key] = agentGraphCacheEntry{
+					fingerprint: agentGraphFingerprint{},
+					graph:       &model.AgentGraph{Version: model.AgentGraphVersion, RootSessionKey: key},
+					used:        time.Now(),
+				}
+				srv.evictAgentGraphsLocked()
+				srv.mu.Unlock()
+			}
+		}(workerID)
+	}
+
+	waitGroup.Wait()
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+
+	if len(srv.agentGraphs) > agentGraphMaxEntries {
+		t.Fatalf("cache size %d exceeds cap %d after concurrent eviction", len(srv.agentGraphs), agentGraphMaxEntries)
+	}
+
+	if len(srv.agentGraphs) == 0 {
+		t.Fatal("cache is empty after 512 inserts; entries were lost")
+	}
+}
+
+// TestServerStartBindsPortZero pins the contract that a port-0 listen
+// yields an OS-picked port and the handler chain answers on it.
+func TestServerStartBindsPortZero(t *testing.T) {
+	srv := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), PiDir: filepath.Join(t.TempDir(), "no-pi"), Port: 0})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	srvAddr := listener.Addr().String()
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("expected *net.TCPAddr, got %T", listener.Addr())
+	}
+	if tcpAddr.Port == 0 {
+		t.Fatalf("OS-picked port is 0; expected non-zero (srvAddr=%s)", srvAddr)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- http.Serve(listener, srv.handler()) }()
+
+	resp, err := http.Get("http://" + srvAddr + "/api/adapters") //nolint:noctx // test loopback
+	if err != nil {
+		t.Fatalf("GET %s: %v", srvAddr, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Logf("listener.Close: %v (continuing)", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, http.ErrServerClosed) {
+			t.Logf("Serve returned %v (acceptable for test)", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return within 2s of listener close")
+	}
+}
+
+func TestServerShutdownBeforeStartIsNoOp(t *testing.T) {
+	srv := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "no-claude"), CodexDir: filepath.Join(t.TempDir(), "no-codex"), PiDir: filepath.Join(t.TempDir(), "no-pi")})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown on un-started server: %v", err)
 	}
 }
