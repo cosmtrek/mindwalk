@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/textutil"
 )
 
@@ -29,7 +30,7 @@ type Runner interface {
 }
 
 // SupportedCLIs lists judge CLIs in detection preference order.
-var SupportedCLIs = []string{"claude", "codex"}
+var SupportedCLIs = []string{"claude", "codex", "crush"}
 
 // DetectCLI returns the first supported judge CLI found on PATH.
 func DetectCLI() (string, error) {
@@ -56,11 +57,7 @@ func DetectCLIs() []string {
 // IsWorkDir to recognize sessions recorded there as mindwalk's own judge runs
 // (a fallback for codex CLIs that predate --ephemeral).
 func WorkDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".mindwalk", "judge")
+	return adapter.HomePath(".mindwalk", "judge")
 }
 
 // IsWorkDir reports whether path is the judge working directory.
@@ -139,6 +136,20 @@ func (r CLIRunner) Run(ctx context.Context, prompt, input string) (RunResult, er
 		}
 		cmd = exec.CommandContext(ctx, "codex", append(args, "-")...)
 		cmd.Stdin = strings.NewReader(prompt + "\n\n" + input)
+	case "crush":
+		// crush run reads the prompt from stdin when no prompt argument is
+		// given, so a large evidence document never hits argv size limits.
+		// --quiet keeps stdout to the reply text only; --verbose emits the
+		// model that answered on stderr (see crushModel). crush persists its
+		// sessions, but it writes them into <workdir>/.crush and the Crush
+		// adapter marks sessions recorded in the judge workdir auxiliary
+		// (judge.IsWorkDir) — the same belt codex relies on.
+		args := []string{"run", "--quiet", "--verbose"}
+		if r.Model != "" {
+			args = append(args, "-m", r.Model)
+		}
+		cmd = exec.CommandContext(ctx, "crush", args...)
+		cmd.Stdin = strings.NewReader(prompt + "\n\n" + input)
 	default:
 		return RunResult{}, fmt.Errorf("unsupported judge CLI %q", r.CLI)
 	}
@@ -156,6 +167,11 @@ func (r CLIRunner) Run(ctx context.Context, prompt, input string) (RunResult, er
 	}
 	if r.CLI == "claude" {
 		return parseClaudeEnvelope(stdout.String()), nil
+	}
+	if r.CLI == "crush" {
+		// --verbose logs the model that answered on stderr as
+		// "model=<name>"; absent a match the model stays unrecorded.
+		return RunResult{Text: stdout.String(), Model: crushModel(stderr.String())}, nil
 	}
 	// codex prints its config preamble (with the "model:" line) on stderr;
 	// older versions used stdout, so check both.
@@ -234,6 +250,18 @@ var codexModelLine = regexp.MustCompile(`(?m)^model:\s+(\S+)`)
 // before the reply; absent a match the model stays unrecorded.
 func codexModel(raw string) string {
 	if match := codexModelLine.FindStringSubmatch(raw); match != nil {
+		return match[1]
+	}
+	return ""
+}
+
+var crushModelField = regexp.MustCompile(`(?m)ModelProvider called.*model=(\S+)`)
+
+// crushModel pulls the model name from the structured log line crush
+// --verbose emits when it resolves its model provider ("ModelProvider
+// called ... model=X"); absent a match the model stays unrecorded.
+func crushModel(raw string) string {
+	if match := crushModelField.FindStringSubmatch(raw); match != nil {
 		return match[1]
 	}
 	return ""
