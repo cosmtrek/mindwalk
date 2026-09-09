@@ -2,7 +2,6 @@ package claudecode
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,18 +15,6 @@ type Adapter struct {
 	Dir string
 }
 
-func DefaultDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claude", "projects")
-}
-
-func (a Adapter) Harness() string {
-	return "claude-code"
-}
-
 func (a Adapter) SessionDir() string {
 	if a.Dir != "" {
 		return a.Dir
@@ -35,9 +22,17 @@ func (a Adapter) SessionDir() string {
 	return DefaultDir()
 }
 
+func DefaultDir() string {
+	return adapter.HomePath(".claude", "projects")
+}
+
+func (a Adapter) Harness() string {
+	return "claude-code"
+}
+
 func (a Adapter) ListSessions() ([]model.SessionMeta, error) {
 	dir := a.SessionDir()
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	if !adapter.ReadableDir(dir) {
 		return nil, nil
 	}
 	var metas []model.SessionMeta
@@ -73,15 +68,16 @@ func (a Adapter) SummaryInputs(path string) []string {
 	if !strings.HasPrefix(filepath.Base(path), "agent-") {
 		return nil
 	}
+
 	return []string{strings.TrimSuffix(path, ".jsonl") + ".meta.json"}
 }
 
 func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
-	f, err := os.Open(path)
+	f, closeFile, err := adapter.OpenFile(path)
 	if err != nil {
 		return model.SessionMeta{}, err
 	}
-	defer f.Close()
+	defer closeFile()
 
 	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	meta := model.SessionMeta{Key: adapter.SessionKey(a.Harness(), path), ID: id, Harness: a.Harness(), Path: path}
@@ -133,7 +129,8 @@ func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 				meta.EventCount += countToolUses(msg.Content)
 				// mirrors Parse's user-message mark filter so the badge's
 				// staleness check counts the same turns the report will
-				if line.Type == "user" && hasUserMessage(msg.Content) && !adapter.InjectedUserMessage(userMessageText(msg.Content)) {
+				if line.Type == "user" && hasUserMessage(msg.Content) &&
+					!adapter.InjectedUserMessage(userMessageText(msg.Content)) {
 					meta.UserTurns++
 				}
 			}
@@ -154,21 +151,19 @@ func (a Adapter) Summarize(path string) (model.SessionMeta, error) {
 			meta.Agent.LaunchCallID = childMeta.ToolUseID
 		}
 	}
-	if meta.Title == "" {
-		meta.Title = filepath.Base(path)
-	}
+	adapter.FallbackSessionTitle(&meta, path)
 	if !recognized {
-		return model.SessionMeta{}, fmt.Errorf("not a Claude Code session: %s", path)
+		return model.SessionMeta{}, adapter.NotRecognizedErr("Claude Code", path)
 	}
 	return meta, err
 }
 
 func (a Adapter) Parse(path string) (*model.Trace, error) {
-	f, err := os.Open(path)
+	f, closeFile, err := adapter.OpenFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer closeFile()
 
 	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	trace := &model.Trace{
@@ -231,7 +226,10 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 					Timestamp: line.Timestamp,
 				}
 				if call.Name == "Task" || call.Name == "Agent" {
-					trace.Marks = append(trace.Marks, model.Mark{Seq: len(trace.Events), Type: "subagent", Note: call.Name})
+					trace.Marks = append(
+						trace.Marks,
+						model.Mark{Seq: len(trace.Events), Type: "subagent", Note: call.Name},
+					)
 				}
 				if _, exists := pending[call.ID]; !exists {
 					pendingOrder = append(pendingOrder, call.ID)
@@ -261,9 +259,9 @@ func (a Adapter) Parse(path string) (*model.Trace, error) {
 	}
 	trace.Session.EventCount = len(trace.Events)
 	// Claude Code tool results carry an is_error flag set by the harness.
-	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilityExact)
+	trace.Stats = model.ComputeStats(trace, 0, model.ObservabilitySignals{Errors: model.ObservabilityExact})
 	if !recognized {
-		return nil, fmt.Errorf("not a Claude Code session: %s", path)
+		return nil, adapter.NotRecognizedErr("Claude Code", path)
 	}
 	return trace, err
 }
@@ -308,22 +306,28 @@ func (c *contentList) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &items); err != nil {
 		return err
 	}
+
 	var rawItems []map[string]json.RawMessage
 	if err := json.Unmarshal(data, &rawItems); err != nil {
 		return err
 	}
+
 	for i := range items {
 		items[i].IsError = nil
+
 		raw, ok := rawItems[i]["is_error"]
 		if !ok || strings.TrimSpace(string(raw)) == "null" {
 			continue
 		}
+
 		var value bool
 		if err := json.Unmarshal(raw, &value); err != nil {
 			return err
 		}
+
 		items[i].IsError = &value
 	}
+
 	c.Items = items
 	return nil
 }
@@ -407,6 +411,7 @@ func isClaudeLine(line rawLine) bool {
 
 func buildEvent(trace *model.Trace, call adapter.ToolCall, result contentItem, resultObserved bool) model.Event {
 	isError := result.IsError != nil && *result.IsError
+
 	return adapter.BuildEvent(trace, call, adapter.ToolResult{
 		Content:      adapter.ContentToString(result.Content),
 		IsError:      isError,

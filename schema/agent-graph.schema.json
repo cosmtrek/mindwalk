@@ -50,6 +50,7 @@
             "codex-parent-thread-id",
             "claude-tool-use-id",
             "claude-subagents-directory",
+            "crush-agent-id",
             "unavailable"
           ]
         }

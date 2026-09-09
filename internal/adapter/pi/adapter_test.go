@@ -22,19 +22,29 @@ func writeSession(t *testing.T, lines ...string) string {
 }
 
 func header(cwd string) string {
-	return fmt.Sprintf(`{"type":"session","version":3,"id":"sess-1","timestamp":"2026-07-21T14:34:07.238Z","cwd":%q}`, cwd)
+	return fmt.Sprintf(
+		`{"type":"session","version":3,"id":"sess-1","timestamp":"2026-07-21T14:34:07.238Z","cwd":%q}`,
+		cwd,
+	)
 }
 
 func TestParseLinearSession(t *testing.T) {
 	root := t.TempDir()
 	mainGo := filepath.Join(root, "src", "main.go")
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"model_change","id":"e1","parentId":null,"timestamp":"2026-07-21T14:34:07.287Z","provider":"moonshotai","modelId":"kimi-k3"}`,
 		`{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-07-21T14:34:22.963Z","message":{"role":"user","content":[{"type":"text","text":"fix the bug"}],"timestamp":1784644462960}}`,
-		fmt.Sprintf(`{"type":"message","id":"e3","parentId":"e2","timestamp":"2026-07-21T14:34:25.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"read","arguments":{"path":%q}}],"model":"kimi-k3","stopReason":"toolUse"}}`, mainGo),
+		fmt.Sprintf(
+			`{"type":"message","id":"e3","parentId":"e2","timestamp":"2026-07-21T14:34:25.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"read","arguments":{"path":%q}}],"model":"kimi-k3","stopReason":"toolUse"}}`,
+			mainGo,
+		),
 		`{"type":"message","id":"e4","parentId":"e3","timestamp":"2026-07-21T14:34:26.000Z","message":{"role":"toolResult","toolCallId":"t1","toolName":"read","content":[{"type":"text","text":"package main"}],"isError":false}}`,
-		fmt.Sprintf(`{"type":"message","id":"e5","parentId":"e4","timestamp":"2026-07-21T14:34:27.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t2","name":"edit","arguments":{"path":%q,"edits":[{"oldText":"a","newText":"b"}]}}],"model":"kimi-k3","stopReason":"toolUse"}}`, mainGo),
+		fmt.Sprintf(
+			`{"type":"message","id":"e5","parentId":"e4","timestamp":"2026-07-21T14:34:27.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t2","name":"edit","arguments":{"path":%q,"edits":[{"oldText":"a","newText":"b"}]}}],"model":"kimi-k3","stopReason":"toolUse"}}`,
+			mainGo,
+		),
 		`{"type":"message","id":"e6","parentId":"e5","timestamp":"2026-07-21T14:34:28.000Z","message":{"role":"toolResult","toolCallId":"t2","toolName":"edit","content":[{"type":"text","text":"oldText not found"}],"isError":true}}`,
 	)
 
@@ -81,7 +91,8 @@ func TestParseLinearSession(t *testing.T) {
 
 func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"message","id":"a1","parentId":null,"timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"success","name":"read","arguments":{"path":"ok.go"}},{"type":"toolCall","id":"failure","name":"edit","arguments":{"path":"bad.go"}},{"type":"toolCall","id":"unknown","name":"bash","arguments":{"command":"sleep 100"}},{"type":"toolCall","id":"wrong-case","name":"edit","arguments":{"path":"case.go"}}],"stopReason":"toolUse"}}`,
 		`{"type":"message","id":"r1","parentId":"a1","timestamp":"2026-07-21T14:35:02.000Z","message":{"role":"toolResult","toolCallId":"success","toolName":"read","content":[{"type":"text","text":"ok"}],"isError":false}}`,
@@ -94,21 +105,27 @@ func TestParsePreservesToolOutcomeCertainty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(trace.Events) != 4 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
+
 	if got := trace.Events[0]; !got.OutcomeKnown || got.IsError {
 		t.Fatalf("success event = %#v", got)
 	}
+
 	if got := trace.Events[1]; !got.OutcomeKnown || !got.IsError {
 		t.Fatalf("failure event = %#v", got)
 	}
+
 	if got := trace.Events[2]; got.OutcomeKnown || got.IsError {
 		t.Fatalf("unknown event = %#v", got)
 	}
+
 	if got := trace.Events[3]; got.OutcomeKnown || got.IsError {
 		t.Fatalf("wrong-case error key event = %#v", got)
 	}
+
 	if trace.Stats.Observability.Errors != "estimated" {
 		t.Fatalf("observability = %#v", trace.Stats.Observability)
 	}
@@ -118,13 +135,20 @@ func TestParseFollowsTrunkAcrossBranches(t *testing.T) {
 	root := t.TempDir()
 	fileA := filepath.Join(root, "a.go")
 	fileB := filepath.Join(root, "b.go")
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","message":{"role":"user","content":[{"type":"text","text":"try something"}],"timestamp":1}}`,
-		fmt.Sprintf(`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"write","arguments":{"path":%q,"content":"x"}}],"stopReason":"toolUse"}}`, fileA),
+		fmt.Sprintf(
+			`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"write","arguments":{"path":%q,"content":"x"}}],"stopReason":"toolUse"}}`,
+			fileA,
+		),
 		`{"type":"message","id":"r1","parentId":"a1","timestamp":"2026-07-21T14:35:02.000Z","message":{"role":"toolResult","toolCallId":"t1","toolName":"write","content":[{"type":"text","text":"ok"}],"isError":false}}`,
 		`{"type":"branch_summary","id":"b1","parentId":"u1","timestamp":"2026-07-21T14:36:00.000Z","fromId":"r1","summary":"abandoned the first approach"}`,
-		fmt.Sprintf(`{"type":"message","id":"a2","parentId":"b1","timestamp":"2026-07-21T14:36:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t2","name":"write","arguments":{"path":%q,"content":"y"}}],"stopReason":"toolUse"}}`, fileB),
+		fmt.Sprintf(
+			`{"type":"message","id":"a2","parentId":"b1","timestamp":"2026-07-21T14:36:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t2","name":"write","arguments":{"path":%q,"content":"y"}}],"stopReason":"toolUse"}}`,
+			fileB,
+		),
 		`{"type":"message","id":"r2","parentId":"a2","timestamp":"2026-07-21T14:36:02.000Z","message":{"role":"toolResult","toolCallId":"t2","toolName":"write","content":[{"type":"text","text":"ok"}],"isError":false}}`,
 	)
 
@@ -152,10 +176,17 @@ func TestParseFollowsTrunkAcrossBranches(t *testing.T) {
 
 func TestParseV1LinearWithoutIDs(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
-		fmt.Sprintf(`{"type":"session","version":1,"id":"sess-v1","timestamp":"2026-07-21T14:34:07.238Z","cwd":%q}`, root),
+	path := writeSession(
+		t,
+		fmt.Sprintf(
+			`{"type":"session","version":1,"id":"sess-v1","timestamp":"2026-07-21T14:34:07.238Z","cwd":%q}`,
+			root,
+		),
 		`{"type":"message","timestamp":"2026-07-21T14:34:22.000Z","message":{"role":"user","content":"hello","timestamp":1}}`,
-		fmt.Sprintf(`{"type":"message","timestamp":"2026-07-21T14:34:23.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"read","arguments":{"path":%q}}],"stopReason":"toolUse"}}`, filepath.Join(root, "x.go")),
+		fmt.Sprintf(
+			`{"type":"message","timestamp":"2026-07-21T14:34:23.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"read","arguments":{"path":%q}}],"stopReason":"toolUse"}}`,
+			filepath.Join(root, "x.go"),
+		),
 		`{"type":"message","timestamp":"2026-07-21T14:34:24.000Z","message":{"role":"toolResult","toolCallId":"t1","toolName":"read","content":[{"type":"text","text":"data"}],"isError":false}}`,
 	)
 
@@ -172,7 +203,8 @@ func TestParseV1LinearWithoutIDs(t *testing.T) {
 }
 
 func TestParseRejectsOtherSources(t *testing.T) {
-	claudeFile := writeSession(t,
+	claudeFile := writeSession(
+		t,
 		`{"type":"user","sessionId":"c1","timestamp":"2026-07-21T14:34:07.238Z","cwd":"/tmp","message":{"role":"user","content":"hi"}}`,
 	)
 	codexFile := writeSession(t,
@@ -194,7 +226,8 @@ func TestParseRejectsOtherSources(t *testing.T) {
 
 	// The reverse direction: the other adapters must not claim a pi file,
 	// or trial-parse dispatch would route pi sessions to the wrong source.
-	piFile := writeSession(t,
+	piFile := writeSession(
+		t,
 		header(t.TempDir()),
 		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:34:22.963Z","message":{"role":"user","content":[{"type":"text","text":"hello"}],"timestamp":1}}`,
 	)
@@ -208,7 +241,8 @@ func TestParseRejectsOtherSources(t *testing.T) {
 
 func TestParseBashExecution(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","message":{"role":"bashExecution","command":"npm run build","output":"boom","exitCode":1,"cancelled":false,"truncated":false,"timestamp":1}}`,
 		`{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-07-21T14:35:10.000Z","message":{"role":"bashExecution","command":"go test ./...","output":"ok","exitCode":0,"cancelled":false,"truncated":false,"timestamp":2}}`,
@@ -220,18 +254,23 @@ func TestParseBashExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(trace.Events) != 4 {
 		t.Fatalf("events = %#v", trace.Events)
 	}
+
 	if trace.Events[0].Tool != "bash" || !trace.Events[0].OutcomeKnown || !trace.Events[0].IsError {
 		t.Fatalf("failed command event = %#v", trace.Events[0])
 	}
+
 	if trace.Events[1].Action != "verify" || !trace.Events[1].OutcomeKnown || trace.Events[1].IsError {
 		t.Fatalf("verify event = %#v", trace.Events[1])
 	}
+
 	if trace.Events[2].OutcomeKnown || trace.Events[2].IsError {
 		t.Fatalf("cancelled command without exit code has unknown outcome: %#v", trace.Events[2])
 	}
+
 	if trace.Events[3].OutcomeKnown || trace.Events[3].IsError {
 		t.Fatalf("wrong-case exit code has unknown outcome: %#v", trace.Events[3])
 	}
@@ -239,7 +278,8 @@ func TestParseBashExecution(t *testing.T) {
 
 func TestParseExtensionChannels(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"custom","id":"e1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","customType":"my-state","data":{"count":42}}`,
 		`{"type":"custom_message","id":"e2","parentId":"e1","timestamp":"2026-07-21T14:35:01.000Z","customType":"handoff","content":"resume from the previous session","display":true}`,
@@ -269,9 +309,13 @@ func TestParseExtensionChannels(t *testing.T) {
 
 func TestParseFlushesUnpairedToolCalls(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
-		fmt.Sprintf(`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"read","arguments":{"path":%q}}],"stopReason":"aborted"}}`, filepath.Join(root, "x.go")),
+		fmt.Sprintf(
+			`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"read","arguments":{"path":%q}}],"stopReason":"aborted"}}`,
+			filepath.Join(root, "x.go"),
+		),
 	)
 
 	trace, err := Adapter{}.Parse(path)
@@ -285,7 +329,8 @@ func TestParseFlushesUnpairedToolCalls(t *testing.T) {
 
 func TestParseCompactionMark(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","message":{"role":"user","content":"long task","timestamp":1}}`,
 		`{"type":"compaction","id":"e2","parentId":"e1","timestamp":"2026-07-21T15:00:00.000Z","summary":"did things","firstKeptEntryId":"e1","tokensBefore":50000}`,
@@ -305,7 +350,8 @@ func TestParseCompactionMark(t *testing.T) {
 
 func TestSummarize(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"model_change","id":"e1","parentId":null,"timestamp":"2026-07-21T14:34:07.287Z","provider":"moonshotai","modelId":"kimi-k3"}`,
 		`{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-07-21T14:34:22.963Z","message":{"role":"user","content":[{"type":"text","text":"first task"}],"timestamp":1}}`,
@@ -341,7 +387,8 @@ func TestSummarize(t *testing.T) {
 
 func TestSummarizeTitleFallsBackToFirstUserMessage(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:34:22.963Z","message":{"role":"user","content":[{"type":"text","text":"rename the config loader"}],"timestamp":1}}`,
 	)
@@ -382,11 +429,13 @@ func TestListSessions(t *testing.T) {
 func TestParseAcceptsCwdlessLegacySession(t *testing.T) {
 	// pi's own readSessionHeader only requires type "session" plus a string
 	// id; legacy sessions can lack a cwd entirely and must still open.
-	noCwdField := writeSession(t,
+	noCwdField := writeSession(
+		t,
 		`{"type":"session","version":1,"id":"legacy-1","timestamp":"2026-07-21T14:34:07.238Z"}`,
 		`{"type":"message","timestamp":"2026-07-21T14:34:22.000Z","message":{"role":"user","content":"hello","timestamp":1}}`,
 	)
-	emptyCwd := writeSession(t,
+	emptyCwd := writeSession(
+		t,
 		`{"type":"session","version":3,"id":"legacy-2","timestamp":"2026-07-21T14:34:07.238Z","cwd":""}`,
 		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:34:22.000Z","message":{"role":"user","content":"hello","timestamp":1}}`,
 	)
@@ -419,14 +468,21 @@ func TestSummarizeMatchesParseOnBranchedSession(t *testing.T) {
 	root := t.TempDir()
 	fileA := filepath.Join(root, "a.go")
 	fileB := filepath.Join(root, "b.go")
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"message","id":"u1","parentId":null,"timestamp":"2026-07-21T14:35:00.000Z","message":{"role":"user","content":[{"type":"text","text":"try something"}],"timestamp":1}}`,
-		fmt.Sprintf(`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"write","arguments":{"path":%q,"content":"x"}}],"stopReason":"toolUse"}}`, fileA),
+		fmt.Sprintf(
+			`{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-07-21T14:35:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"write","arguments":{"path":%q,"content":"x"}}],"stopReason":"toolUse"}}`,
+			fileA,
+		),
 		`{"type":"message","id":"r1","parentId":"a1","timestamp":"2026-07-21T14:35:02.000Z","message":{"role":"toolResult","toolCallId":"t1","toolName":"write","content":[{"type":"text","text":"ok"}],"isError":false}}`,
 		`{"type":"message","id":"u2","parentId":"r1","timestamp":"2026-07-21T14:35:03.000Z","message":{"role":"user","content":[{"type":"text","text":"abandoned follow-up"}],"timestamp":2}}`,
 		`{"type":"branch_summary","id":"b1","parentId":"u1","timestamp":"2026-07-21T14:36:00.000Z","fromId":"u2","summary":"left the first attempt"}`,
-		fmt.Sprintf(`{"type":"message","id":"a2","parentId":"b1","timestamp":"2026-07-21T14:36:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t2","name":"write","arguments":{"path":%q,"content":"y"}}],"stopReason":"toolUse"}}`, fileB),
+		fmt.Sprintf(
+			`{"type":"message","id":"a2","parentId":"b1","timestamp":"2026-07-21T14:36:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t2","name":"write","arguments":{"path":%q,"content":"y"}}],"stopReason":"toolUse"}}`,
+			fileB,
+		),
 		`{"type":"message","id":"r2","parentId":"a2","timestamp":"2026-07-21T14:36:02.000Z","message":{"role":"toolResult","toolCallId":"t2","toolName":"write","content":[{"type":"text","text":"ok"}],"isError":false}}`,
 	)
 
@@ -456,7 +512,8 @@ func TestSummarizeMatchesParseOnBranchedSession(t *testing.T) {
 
 func TestSessionTitleClearedByEmptySessionInfo(t *testing.T) {
 	root := t.TempDir()
-	path := writeSession(t,
+	path := writeSession(
+		t,
 		header(root),
 		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-07-21T14:34:22.963Z","message":{"role":"user","content":[{"type":"text","text":"rename the loader"}],"timestamp":1}}`,
 		`{"type":"session_info","id":"e2","parentId":"e1","timestamp":"2026-07-21T14:34:23.000Z","name":"Named"}`,

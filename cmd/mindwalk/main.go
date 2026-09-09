@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
+	"github.com/cosmtrek/mindwalk/internal/adapter/crush"
 	"github.com/cosmtrek/mindwalk/internal/adapter/pi"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
 	"github.com/cosmtrek/mindwalk/internal/judge"
@@ -56,12 +58,14 @@ func serve(args []string) error {
 	claudeDir := fs.String("claude-dir", claudecode.DefaultDir(), "Claude Code projects directory")
 	codexDir := fs.String("codex-dir", codex.DefaultDir(), "Codex sessions directory")
 	piDir := fs.String("pi-dir", pi.DefaultDir(), "pi sessions directory")
+	crushDir := fs.String("crush-dir", "", "Crush data directory override (containing crush.db); empty = auto-discover")
+	noCrush := fs.Bool("no-crush", false, "disable the Crush adapter (skip the per-project .crush scan)")
 	dev := fs.Bool("dev", false, "prefer web/dist from the working tree")
 	noOpen := fs.Bool("no-open", false, "serve without opening a browser")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, Dev: *dev}).Start(!*noOpen)
+	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, CrushDir: *crushDir, DisableCrush: *noCrush, Dev: *dev}).Start(!*noOpen)
 }
 
 func open(args []string) error {
@@ -70,6 +74,8 @@ func open(args []string) error {
 	claudeDir := fs.String("claude-dir", claudecode.DefaultDir(), "Claude Code projects directory")
 	codexDir := fs.String("codex-dir", codex.DefaultDir(), "Codex sessions directory")
 	piDir := fs.String("pi-dir", pi.DefaultDir(), "pi sessions directory")
+	crushDir := fs.String("crush-dir", "", "Crush data directory override (containing crush.db); empty = auto-discover")
+	noCrush := fs.Bool("no-crush", false, "disable the Crush adapter (skip the per-project .crush scan)")
 	noOpen := fs.Bool("no-open", false, "serve without opening a browser")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -81,7 +87,7 @@ func open(args []string) error {
 	if err != nil {
 		return err
 	}
-	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, OpenSession: session}).Start(!*noOpen)
+	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, CrushDir: *crushDir, DisableCrush: *noCrush, OpenSession: session}).Start(!*noOpen)
 }
 
 func openMap(args []string) error {
@@ -122,12 +128,20 @@ func trace(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(positional) != 1 {
-		return fmt.Errorf("usage: mindwalk trace <session.jsonl> [-o out]")
+	crushDir := ""
+	for i, arg := range positional {
+		if arg == "--crush-dir" && i+1 < len(positional) {
+			crushDir = positional[i+1]
+			positional = append(positional[:i], positional[i+2:]...)
+			break
+		}
 	}
-	tr, err := parseTrace(positional[0])
+	if len(positional) != 1 {
+		return fmt.Errorf("usage: mindwalk trace [--crush-dir DIR] <session> [-o out]")
+	}
+	tr, err := parseTrace(positional[0], crushDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse trace %s: %w", positional[0], err)
 	}
 	return writeJSON(out, tr)
 }
@@ -154,6 +168,8 @@ func analyze(args []string) error {
 	judgeModel := fs.String("model", "", "judge model override, e.g. sonnet or gpt-5.6-sol (default: the CLI's default)")
 	noCache := fs.Bool("no-cache", false, "re-run the judge even when a fresh cached report exists")
 	noRubric := fs.Bool("no-rubric", false, "skip the task rubric layer: one dimensions-only judge call, bypassing the report cache")
+	crushDir := fs.String("crush-dir", "", "Crush data directory override (containing crush.db); empty = auto-discover")
+	noCrush := fs.Bool("no-crush", false, "disable the Crush adapter (skip the per-project .crush scan)")
 	timeout := fs.Duration("timeout", judge.DefaultTimeout, "judge subprocess timeout")
 	// Accept flags after the positional argument, matching trace/build.
 	var positional []string
@@ -170,11 +186,16 @@ func analyze(args []string) error {
 	if len(positional) != 1 {
 		return fmt.Errorf("usage: mindwalk analyze <session.jsonl> [-o out] [--judge claude|codex] [--model name] [--no-cache] [--no-rubric]")
 	}
-	session, err := filepath.Abs(positional[0])
-	if err != nil {
-		return err
+	session := positional[0]
+	// crush:// selectors are synthetic handles, not filesystem paths.
+	if !strings.HasPrefix(session, "crush://") {
+		var err error
+		session, err = filepath.Abs(positional[0])
+		if err != nil {
+			return err
+		}
 	}
-	tr, err := parseTrace(session)
+	tr, err := parseTrace(session, crushDirFor(*crushDir, *noCrush))
 	if err != nil {
 		return err
 	}
@@ -214,9 +235,9 @@ func analyze(args []string) error {
 	return writeJSON(*out, report)
 }
 
-func parseTrace(path string) (*model.Trace, error) {
+func parseTrace(path string, crushDir string) (*model.Trace, error) {
 	var lastErr error
-	for _, source := range []adapter.Source{claudecode.Adapter{}, codex.Adapter{}, pi.Adapter{}} {
+	for _, source := range traceSources(crushDir) {
 		trace, err := source.Parse(path)
 		if err == nil {
 			return trace, nil
@@ -227,6 +248,27 @@ func parseTrace(path string) (*model.Trace, error) {
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("no session adapters configured")
+}
+
+// traceSources returns the adapter sources parseTrace will try, in
+// order. An empty crushDir means "auto-discover"; a non-empty value pins
+// a specific installation.
+func traceSources(crushDir string) []adapter.Source {
+	sources := []adapter.Source{claudecode.Adapter{}, codex.Adapter{}, pi.Adapter{}}
+	if crushDir == "" {
+		return append(sources, crush.Adapter{})
+	}
+	return append(sources, crush.Adapter{Dir: crushDir})
+}
+
+// crushDirFor resolves the crush directory from the --crush-dir and
+// --no-crush flag values. --no-crush is signalled by passing a path that
+// cannot possibly exist, so the Crush adapter finds nothing to read.
+func crushDirFor(override string, noCrush bool) string {
+	if noCrush {
+		return "/dev/null/mindwalk-no-crush"
+	}
+	return override
 }
 
 func parseOutputArgs(args []string) ([]string, string, error) {
