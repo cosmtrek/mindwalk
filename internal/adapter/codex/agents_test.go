@@ -58,6 +58,7 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					},
 				})
 				seq := 1
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
@@ -91,10 +92,14 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					output("", "call-failed", "fork requires a previous turn"),
 				})
 				seq := 0
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
-						ID:                 codexAgentID(fixture.root, "launch:"+codexMainID(fixture.root)+":call-failed"),
+						ID: codexAgentID(
+							fixture.root,
+							"launch:"+codexMainID(fixture.root)+":call-failed",
+						),
 						ParentID:           codexMainID(fixture.root),
 						Depth:              1,
 						Kind:               model.AgentKindSubagent,
@@ -122,6 +127,7 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					output("", "call-missing", `{"agent_id":"agent-missing","nickname":"Nova"}`),
 				})
 				seq := 0
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
@@ -170,6 +176,7 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 				)
 				rootSeq, nestedSeq := 0, 1
 				childID := codexAgentID(fixture.root, "codex-agent:agent-child")
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
@@ -217,6 +224,7 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					label:    "Orphan",
 					role:     "explorer",
 				})
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
@@ -250,6 +258,7 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					label:    "Valid",
 				})
 				seq := 0
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
@@ -284,6 +293,7 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					label:    "Zero",
 				})
 				seq := 0
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
@@ -315,10 +325,14 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					}),
 				})
 				seq := 0
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					{
-						ID:                 codexAgentID(fixture.root, "launch:"+codexMainID(fixture.root)+":call-unknown"),
+						ID: codexAgentID(
+							fixture.root,
+							"launch:"+codexMainID(fixture.root)+":call-unknown",
+						),
 						ParentID:           codexMainID(fixture.root),
 						Depth:              1,
 						Kind:               model.AgentKindSubagent,
@@ -351,10 +365,18 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 					codexAgentChildFixture{id: "agent-zulu", parentID: "root-session", depth: 1, label: "Zulu"},
 				)
 				zuluSeq, alphaSeq := 0, 2
+
 				return fixture, []model.AgentNode{
 					mainAgentNode(fixture.root),
 					availableCodexLaunch(fixture.root, fixture.catalog[2], "agent-zulu", "call-zulu", "zulu", zuluSeq),
-					availableCodexLaunch(fixture.root, fixture.catalog[1], "agent-alpha", "call-alpha", "alpha", alphaSeq),
+					availableCodexLaunch(
+						fixture.root,
+						fixture.catalog[1],
+						"agent-alpha",
+						"call-alpha",
+						"alpha",
+						alphaSeq,
+					),
 					{
 						ID:                codexAgentID(fixture.root, "session:"+fixture.catalog[0].Key),
 						ParentID:          codexMainID(fixture.root),
@@ -375,20 +397,25 @@ func TestCodexAgentGraphFixtures(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture, want := test.setup(t)
+
 			first, err := fixture.adapter.BuildAgentGraph(fixture.root, fixture.catalog)
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			second, err := fixture.adapter.BuildAgentGraph(fixture.root, fixture.catalog)
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if !reflect.DeepEqual(first, second) {
 				t.Fatalf("successive builds differ:\nfirst:  %#v\nsecond: %#v", first, second)
 			}
+
 			if first.Version != model.AgentGraphVersion || first.RootSessionKey != fixture.root.Key {
 				t.Fatalf("graph header = %#v", first)
 			}
+
 			if !reflect.DeepEqual(first.Agents, want) {
 				t.Fatalf("agents:\n got: %#v\nwant: %#v", first.Agents, want)
 			}
@@ -414,9 +441,11 @@ func TestCodexAgentGraphLegacyTaskNameMergesDerivedChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(graph.Agents) != 2 {
 		t.Fatalf("agents = %#v, want Main plus one merged legacy child", graph.Agents)
 	}
+
 	node := graph.Agents[1]
 	if node.Label != "Legacy Reviewer" || node.LaunchCallID != "call-legacy" ||
 		node.Status != model.AgentStatusLaunched || node.TraceAvailability != model.TraceAvailabilityAvailable ||
@@ -435,6 +464,7 @@ func TestCodexAgentGraphUnknownJSONObjectIsNotFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(graph.Agents) != 2 || graph.Agents[1].Status != model.AgentStatusUnknown {
 		t.Fatalf("unknown output node = %#v", graph.Agents)
 	}
@@ -462,10 +492,12 @@ func TestCodexAgentGraphUsesStablePreorder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	labels := make([]string, len(graph.Agents))
 	for i, node := range graph.Agents {
 		labels[i] = node.Label
 	}
+
 	want := []string{"Main", "A", "A1", "B"}
 	if !reflect.DeepEqual(labels, want) {
 		t.Fatalf("agent order = %v, want %v", labels, want)
@@ -483,8 +515,10 @@ func TestCodexAgentGraphInputsIncludeNestedChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := []string{fixture.root.Path, fixture.catalog[0].Path, fixture.catalog[1].Path}
 	sort.Strings(want)
+
 	if !reflect.DeepEqual(inputs, want) {
 		t.Fatalf("graph inputs = %v, want %v", inputs, want)
 	}
@@ -496,21 +530,26 @@ func newCodexAgentFixture(t *testing.T, rootLines []any, children ...codexAgentC
 	a := Adapter{Dir: dir}
 	rootPath := filepath.Join(dir, "root.jsonl")
 	writeAgentJSONL(t, rootPath, append([]any{codexRootSessionMeta()}, rootLines...)...)
+
 	root, err := a.Summarize(rootPath)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	catalog := make([]model.SessionMeta, 0, len(children))
 	for _, child := range children {
 		path := filepath.Join(dir, child.id+".jsonl")
 		lines := append([]any{codexChildSessionMeta(child)}, child.lines...)
 		writeAgentJSONL(t, path, lines...)
+
 		meta, err := a.Summarize(path)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		catalog = append(catalog, meta)
 	}
+
 	return codexAgentFixture{adapter: a, root: root, catalog: catalog}
 }
 
@@ -548,20 +587,26 @@ func codexChildSessionMeta(child codexAgentChildFixture) map[string]any {
 
 func writeAgentJSONL(t *testing.T, path string, values ...any) {
 	t.Helper()
+
 	var content []byte
+
 	for _, value := range values {
 		if raw, ok := value.(rawAgentJSONL); ok {
 			content = append(content, raw...)
 			content = append(content, '\n')
+
 			continue
 		}
+
 		line, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		content = append(content, line...)
 		content = append(content, '\n')
 	}
+
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +627,12 @@ func mainAgentNode(root model.SessionMeta) model.AgentNode {
 	}
 }
 
-func availableCodexLaunch(root model.SessionMeta, child model.SessionMeta, agentID, callID, message string, seq int) model.AgentNode {
+func availableCodexLaunch(
+	root model.SessionMeta,
+	child model.SessionMeta,
+	agentID, callID, message string,
+	seq int,
+) model.AgentNode {
 	return model.AgentNode{
 		ID:                 codexAgentID(root, "codex-agent:"+agentID),
 		ParentID:           codexMainID(root),
