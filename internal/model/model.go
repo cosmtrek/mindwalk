@@ -61,6 +61,7 @@ type TraceSession struct {
 	ID         string `json:"id"`
 	Harness    string `json:"harness"`
 	Model      string `json:"model,omitempty"`
+	Provider   string `json:"provider,omitempty"`
 	Title      string `json:"title,omitempty"`
 	Cwd        string `json:"cwd,omitempty"`
 	Commit     string `json:"commit,omitempty"`
@@ -83,6 +84,10 @@ type Event struct {
 	// result. IsError remains sufficient to identify failures in older traces.
 	OutcomeKnown bool   `json:"outcomeKnown,omitempty"`
 	Summary      string `json:"summary"`
+	// ProviderExecuted is true when the tool was executed server-side
+	// by the model provider rather than locally by the harness. Only
+	// the crush adapter sets this today.
+	ProviderExecuted bool `json:"providerExecuted,omitempty"`
 }
 
 type Target struct {
@@ -99,9 +104,10 @@ type OutsideTouch struct {
 }
 
 type Mark struct {
-	Seq  int    `json:"seq"`
-	Type string `json:"type"`
-	Note string `json:"note,omitempty"`
+	Seq      int    `json:"seq"`
+	Type     string `json:"type"`
+	Note     string `json:"note,omitempty"`
+	Duration int    `json:"duration,omitempty"`
 }
 
 type Stats struct {
@@ -155,16 +161,29 @@ type ActionCounts struct {
 }
 
 type SessionMeta struct {
-	Key       string `json:"key"`
-	ID        string `json:"id"`
-	Harness   string `json:"harness"`
-	Title     string `json:"title,omitempty"`
+	Key     string `json:"key"`
+	ID      string `json:"id"`
+	Harness string `json:"harness"`
+	Title   string `json:"title,omitempty"`
+	// Path is the deep-link handle the server uses to recover the
+	// session. For filesystem-backed harnesses (Claude Code,
+	// Codex) it is the on-disk JSONL file path. For database-
+	// backed harnesses (Crush, future Aider/Goose) it is a
+	// synthetic URI like "crush://session/<id>" that the adapter
+	// resolves to a row in its storage. Callers that need to
+	// os.Stat the path must check for the synthetic scheme first.
 	Path      string `json:"path"`
 	Cwd       string `json:"cwd,omitempty"`
 	Model     string `json:"model,omitempty"`
+	Provider  string `json:"provider,omitempty"`
 	GitBranch string `json:"gitBranch,omitempty"`
 	StartedAt string `json:"startedAt,omitempty"`
 	EndedAt   string `json:"endedAt,omitempty"`
+	// PromptTokens and CompletionTokens are the session-level token
+	// economics from the harness's session table, when available.
+	PromptTokens     int64   `json:"promptTokens,omitempty"`
+	CompletionTokens int64   `json:"completionTokens,omitempty"`
+	Cost             float64 `json:"cost,omitempty"`
 	// EventCount and UserTurns together are the cheap staleness signal for
 	// report badges: user messages land on marks, not events, so the count
 	// alone misses exactly the follow-ups that matter most.

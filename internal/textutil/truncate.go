@@ -18,6 +18,7 @@ func TruncateRunes(text string, limit int, marker string) string {
 		if utf8.ValidString(text) {
 			return text
 		}
+
 		return string(runes)
 	}
 
@@ -25,6 +26,8 @@ func TruncateRunes(text string, limit int, marker string) string {
 	if len(markerRunes) > limit {
 		markerRunes = markerRunes[:limit]
 	}
+
 	contentLimit := limit - len(markerRunes)
+
 	return string(runes[:contentLimit]) + string(markerRunes)
 }
