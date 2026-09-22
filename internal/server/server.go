@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cosmtrek/mindwalk/internal/adapter"
+	"github.com/cosmtrek/mindwalk/internal/adapter/antigravity"
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
 	"github.com/cosmtrek/mindwalk/internal/adapter/pi"
@@ -35,14 +36,15 @@ import (
 var embeddedStatic embed.FS
 
 type Config struct {
-	Port        int
-	ClaudeDir   string
-	CodexDir    string
-	PiDir       string
-	OpenSession string
-	Dev         bool
-	RepoRoot    string
-	MapOnly     bool
+	Port           int
+	ClaudeDir      string
+	CodexDir       string
+	PiDir          string
+	AntigravityDir string
+	OpenSession    string
+	Dev            bool
+	RepoRoot       string
+	MapOnly        bool
 }
 
 type Server struct {
@@ -119,8 +121,13 @@ const (
 
 func New(cfg Config) *Server {
 	s := &Server{
-		cfg:             cfg,
-		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}, pi.Adapter{Dir: cfg.PiDir}},
+		cfg: cfg,
+		adapters: []adapter.Source{
+			claudecode.Adapter{Dir: cfg.ClaudeDir},
+			codex.Adapter{Dir: cfg.CodexDir},
+			pi.Adapter{Dir: cfg.PiDir},
+			antigravity.Adapter{Dir: cfg.AntigravityDir},
+		},
 		agentGraphs:     map[string]agentGraphCacheEntry{},
 		agentGraphLoads: map[string]*inflightAgentGraph{},
 		summaries:       map[string]summaryCacheEntry{},
