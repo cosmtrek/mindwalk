@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cosmtrek/mindwalk/internal/model"
@@ -244,6 +245,19 @@ func IntFromAny(v any) int {
 		return int(x)
 	case int:
 		return x
+	case int64:
+		return int(x)
+	case json.Number:
+		if n, err := x.Int64(); err == nil {
+			return int(n)
+		}
+		return 0
+	case string:
+		x = strings.TrimSpace(x)
+		if n, err := strconv.Atoi(x); err == nil {
+			return n
+		}
+		return 0
 	default:
 		return 0
 	}
@@ -251,14 +265,14 @@ func IntFromAny(v any) int {
 
 func actionFor(tool string, input map[string]any, result string) string {
 	switch tool {
-	case "Read", "read":
+	case "Read", "read", "view_file", "read_file", "read_url_content":
 		return "read"
-	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "write", "edit":
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch", "write", "edit", "write_to_file", "create_file", "replace_file_content", "edit_file":
 		return "edit"
-	case "Grep", "Glob", "LS", "view_image", "grep", "find", "ls":
+	case "Grep", "Glob", "LS", "view_image", "grep", "find", "ls", "search_web", "search_code":
 		return "search"
-	case "Bash", "bash", "exec_command", "write_stdin", "js", "js_repl":
-		command := firstString(input, "command", "cmd", "code", "chars", "script", "_raw")
+	case "Bash", "bash", "exec_command", "write_stdin", "js", "js_repl", "run_command", "terminal":
+		command := firstString(input, "CommandLine", "command", "cmd", "code", "chars", "script", "_raw")
 		if verifyCommand(command) {
 			return "verify"
 		}
@@ -340,6 +354,17 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		if path, ok := input["path"].(string); ok {
 			add(path, "read", false, readLines(input), "")
 		}
+	case "view_file", "read_file":
+		path := firstString(input, "AbsolutePath", "TargetFile", "file_path", "path")
+		if path != "" {
+			lines := [][2]int{}
+			start := IntFromAny(input["StartLine"])
+			end := IntFromAny(input["EndLine"])
+			if start > 0 && end >= start {
+				lines = [][2]int{{start, end}}
+			}
+			add(path, "read", false, lines, "")
+		}
 	case "Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit":
 		if path, ok := input["file_path"].(string); ok {
 			add(path, "edit", false, nil, "")
@@ -349,6 +374,22 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		}
 		if path, ok := input["path"].(string); ok {
 			add(path, "edit", false, nil, "")
+		}
+	case "write_to_file", "create_file":
+		path := firstString(input, "TargetFile", "file_path", "path")
+		if path != "" {
+			add(path, "edit", false, nil, "")
+		}
+	case "replace_file_content", "edit_file":
+		path := firstString(input, "TargetFile", "file_path", "path")
+		if path != "" {
+			lines := [][2]int{}
+			start := IntFromAny(input["StartLine"])
+			end := IntFromAny(input["EndLine"])
+			if start > 0 && end >= start {
+				lines = [][2]int{{start, end}}
+			}
+			add(path, "edit", false, lines, "")
 		}
 	case "Grep", "grep":
 		for _, hit := range parsePathHits(result) {
@@ -366,16 +407,20 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		if path, ok := input["path"].(string); ok && len(targets) == 0 {
 			add(path, "hit", true, nil, "")
 		}
-	case "Bash", "bash":
-		command := firstString(input, "command")
+	case "Bash", "bash", "run_command", "terminal":
+		command := firstString(input, "CommandLine", "command", "cmd")
+		base := firstString(input, "Cwd", "workdir")
 		for _, path := range commandReadPaths(command) {
-			add(path, "read", true, nil, "")
+			add(path, "read", true, nil, base)
 		}
 		for _, path := range extractCommandPaths(command) {
-			add(path, "hit", true, nil, "")
+			add(path, "hit", true, nil, base)
 		}
 		for _, path := range extractPaths(command + "\n" + result) {
-			add(path, "hit", true, nil, "")
+			add(path, "hit", true, nil, base)
+		}
+		for _, hit := range parsePathHits(result) {
+			add(hit.path, "hit", true, hit.lines, base)
 		}
 	case "exec_command":
 		command := firstString(input, "cmd", "command")
