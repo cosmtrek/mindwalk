@@ -516,3 +516,42 @@ func TestBuildEventPiReadRecordsLineRange(t *testing.T) {
 		t.Fatalf("outside = %#v", event.Outside)
 	}
 }
+
+func TestBuildEventBashCwdRebasesRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	writeAdapterTestFile(t, root, "web/src/app.ts")
+	trace := &model.Trace{Session: model.TraceSession{Cwd: root}}
+	for _, cwd := range []string{"web", filepath.Join(root, "web")} {
+		input := map[string]any{"command": "cat src/app.ts", "cwd": cwd}
+		event := BuildEvent(trace, ToolCall{Name: "bash", Input: input}, ToolResult{})
+		if event.Action != "read" || len(event.Targets) != 1 || event.Targets[0].Path != "web/src/app.ts" {
+			t.Fatalf("cwd %q: event = %#v", cwd, event)
+		}
+	}
+}
+
+func TestBuildEventResolvedCallReplacesInference(t *testing.T) {
+	root := t.TempDir()
+	writeAdapterTestFile(t, root, "src/main.go")
+	trace := &model.Trace{Session: model.TraceSession{Cwd: root}}
+	call := ToolCall{
+		Name: "read",
+		// inference alone would turn this input into a bogus repo target
+		Input: map[string]any{"path": "src/main.go:10-20"},
+		Resolved: &ResolvedCall{Action: "read", Paths: []PathRef{
+			{Path: filepath.Join(root, "src", "main.go"), Touch: "read", Lines: [][2]int{{10, 20}}},
+			{Path: "src/missing.go", Touch: "hit", Weak: true},
+			{Path: "/elsewhere/notes.md", Touch: "read"},
+		}},
+	}
+	event := BuildEvent(trace, call, ToolResult{})
+	if event.Action != "read" || event.Tool != "read" {
+		t.Fatalf("event = %#v", event)
+	}
+	if len(event.Targets) != 1 || event.Targets[0].Path != "src/main.go" || event.Targets[0].Lines[0] != [2]int{10, 20} {
+		t.Fatalf("targets = %#v", event.Targets)
+	}
+	if len(event.Outside) != 1 || event.Outside[0].Path != "/elsewhere/notes.md" {
+		t.Fatalf("outside = %#v", event.Outside)
+	}
+}

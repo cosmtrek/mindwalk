@@ -28,7 +28,7 @@ func TestTraceStillLoadsWhenSessionCwdIsMissing(t *testing.T) {
 		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","sessionId":"missingcwd","cwd":`+quoteJSON(missingRoot)+`,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"ok","is_error":false}]}}`,
 	)
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	traceResp := httptest.NewRecorder()
 	s.handleSessionResource(traceResp, httptest.NewRequest(http.MethodGet, "/api/sessions/missingcwd/trace", nil))
 	if traceResp.Code != http.StatusOK {
@@ -79,7 +79,7 @@ func TestOpenSessionUsesUniqueKeyAndFindSessionAcceptsBasename(t *testing.T) {
 		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"internal-id","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
 	)
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OpenSession: session})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OpenSession: session, OmpDir: filepath.Join(t.TempDir(), "omp")})
 	wantKey := adapter.SessionKey("claude-code", session)
 	if got := s.openSessionKey(); got != wantKey {
 		t.Fatalf("openSessionKey = %q, want %q", got, wantKey)
@@ -110,7 +110,7 @@ func TestDuplicateSessionIDsUseDistinctKeysAndCaches(t *testing.T) {
 		})
 	}
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	sessions, err := s.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestTraceCacheReloadsWhenActiveSessionGrows(t *testing.T) {
 		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","sessionId":"growing","cwd":`+quoteJSON(repoRoot)+`,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"ok","is_error":false}]}}`,
 	)
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	firstTrace, firstCity, err := s.traceAndMap("growing")
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestSessionsFreshBypassesListTTL(t *testing.T) {
 	writeServerSession(t, filepath.Join(claudeDir, "first.jsonl"),
 		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"first","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
 	)
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 
 	initial := requestSessions(t, s, "/api/sessions")
 	if len(initial) != 1 {
@@ -217,7 +217,7 @@ func TestConcurrentFreshGenerationReusesCompletedScan(t *testing.T) {
 	writeServerSession(t, filepath.Join(claudeDir, "session.jsonl"),
 		`{"type":"user","timestamp":"2026-07-09T00:00:00Z","sessionId":"session","cwd":"/tmp","message":{"role":"user","content":"hello"}}`,
 	)
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 
 	// Two fresh callers that enter before either scan completes observe the
 	// same generation. The second must reuse the first completed scan.
@@ -389,7 +389,7 @@ func TestServerLoadsCodexSessions(t *testing.T) {
 		},
 	)
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	sessionsResp := httptest.NewRecorder()
 	s.handleSessions(sessionsResp, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
 	if sessionsResp.Code != http.StatusOK {
@@ -478,7 +478,7 @@ func TestCodexAgentAPIsDoNotDeriveChildAcrossDuplicateRootIDs(t *testing.T) {
 		},
 	})
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	sessions := requestSessions(t, s, "/api/sessions")
 	if len(sessions) != 2 {
 		t.Fatalf("visible sessions = %#v, want duplicate-ID roots only", sessions)
@@ -537,7 +537,7 @@ func TestServerRetainsClaudeSubagentInCatalog(t *testing.T) {
 		`{"type":"user","timestamp":"2026-07-09T00:00:01Z","sessionId":"root-id","agentId":"child","isSidechain":true,"cwd":"/tmp","message":{"role":"user","content":"internal"}}`,
 	)
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	sessions := requestSessions(t, s, "/api/sessions")
 	if len(sessions) != 1 || sessions[0].ID != "root-id" {
 		t.Fatalf("sessions = %#v", sessions)
@@ -857,7 +857,7 @@ func TestFreshScanReloadsClaudeSidecarMetadata(t *testing.T) {
 		`{"type":"user","timestamp":"2026-07-09T00:00:01Z","sessionId":"root-id","agentId":"child","isSidechain":true,"cwd":"/tmp","message":{"role":"user","content":"internal"}}`,
 	)
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	requestSessions(t, s, "/api/sessions")
 	childKey := adapter.SessionKey("claude-code", child)
 	if got := s.sessionCatalog[childKey].Agent.Role; got != "" {
@@ -914,7 +914,7 @@ func TestServerSkipsCodexSubagentSessions(t *testing.T) {
 		},
 	)
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	sessions, err := s.scanSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -925,7 +925,7 @@ func TestServerSkipsCodexSubagentSessions(t *testing.T) {
 
 	// Explicitly opening an auxiliary rollout keeps it available internally
 	// without leaking it into the visible session list.
-	explicit := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi"), OpenSession: subagentSession})
+	explicit := New(Config{ClaudeDir: claudeDir, CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi"), OpenSession: subagentSession, OmpDir: filepath.Join(t.TempDir(), "omp")})
 	explicitSessions, err := explicit.listSessions()
 	if err != nil {
 		t.Fatal(err)
@@ -1362,7 +1362,7 @@ func TestSessionAgentsForSourceWithoutGraphSupport(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "claude"), CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: piRoot})
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "claude"), CodexDir: filepath.Join(t.TempDir(), "codex"), PiDir: piRoot, OmpDir: filepath.Join(t.TempDir(), "omp")})
 	if sessions := requestSessions(t, s, "/api/sessions"); len(sessions) != 1 {
 		t.Fatalf("sessions = %#v", sessions)
 	}

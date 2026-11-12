@@ -43,6 +43,26 @@ type ToolCall struct {
 	Name      string
 	Input     map[string]any
 	Timestamp string
+	// Resolved, when set, replaces the shared name-and-input inference for a
+	// tool whose argument and result dialect only its adapter understands.
+	Resolved *ResolvedCall
+}
+
+// ResolvedCall is an adapter's own reading of one tool call. Shared path
+// normalization still applies: paths resolve against the session cwd and
+// split into repository targets and outside touches.
+type ResolvedCall struct {
+	Action string
+	Paths  []PathRef
+}
+
+// PathRef is one file reference an adapter extracted from a tool call.
+type PathRef struct {
+	Path  string
+	Touch string
+	Lines [][2]int
+	// Weak references survive only when the path exists in the repository.
+	Weak bool
 }
 
 type ToolResult struct {
@@ -194,8 +214,20 @@ func ReadJSONLines(r io.Reader, visit func([]byte)) error {
 }
 
 func BuildEvent(trace *model.Trace, call ToolCall, result ToolResult) model.Event {
-	action := actionFor(call.Name, call.Input, result.Content)
-	targets, outside := targetsFor(trace.Session.Cwd, call.Name, call.Input, result.Content)
+	var action string
+	var targets []model.Target
+	var outside []model.OutsideTouch
+	if call.Resolved != nil {
+		action = call.Resolved.Action
+		set := &targetSet{cwd: trace.Session.Cwd}
+		for _, ref := range call.Resolved.Paths {
+			set.add(ref.Path, ref.Touch, ref.Weak, ref.Lines, "")
+		}
+		targets, outside = set.targets, set.outside
+	} else {
+		action = actionFor(call.Name, call.Input, result.Content)
+		targets, outside = targetsFor(trace.Session.Cwd, call.Name, call.Input, result.Content)
+	}
 	if targets == nil {
 		targets = []model.Target{}
 	}
@@ -305,32 +337,39 @@ func actionFor(tool string, input map[string]any, result string) string {
 	}
 }
 
-func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.Target, []model.OutsideTouch) {
-	var targets []model.Target
-	var outside []model.OutsideTouch
-	add := func(path, touch string, weak bool, lines [][2]int, base string) {
-		rel, out, ok := normalizePath(cwd, base, path)
-		if !ok {
-			return
-		}
-		if out != nil {
-			outside = append(outside, *out)
-			return
-		}
-		if weak && !repoPathExists(cwd, rel) {
-			return
-		}
-		for i := range targets {
-			if targets[i].Path == rel {
-				if model.RankTouch(touch) > model.RankTouch(targets[i].Touch) {
-					targets[i].Touch = touch
-				}
-				targets[i].Lines = append(targets[i].Lines, lines...)
-				return
-			}
-		}
-		targets = append(targets, model.Target{Path: rel, Touch: touch, Lines: lines, Weak: weak})
+type targetSet struct {
+	cwd     string
+	targets []model.Target
+	outside []model.OutsideTouch
+}
+
+func (s *targetSet) add(path, touch string, weak bool, lines [][2]int, base string) {
+	rel, out, ok := normalizePath(s.cwd, base, path)
+	if !ok {
+		return
 	}
+	if out != nil {
+		s.outside = append(s.outside, *out)
+		return
+	}
+	if weak && !repoPathExists(s.cwd, rel) {
+		return
+	}
+	for i := range s.targets {
+		if s.targets[i].Path == rel {
+			if model.RankTouch(touch) > model.RankTouch(s.targets[i].Touch) {
+				s.targets[i].Touch = touch
+			}
+			s.targets[i].Lines = append(s.targets[i].Lines, lines...)
+			return
+		}
+	}
+	s.targets = append(s.targets, model.Target{Path: rel, Touch: touch, Lines: lines, Weak: weak})
+}
+
+func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.Target, []model.OutsideTouch) {
+	set := &targetSet{cwd: cwd}
+	add := set.add
 
 	switch tool {
 	case "Read", "read":
@@ -354,7 +393,7 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		for _, hit := range parsePathHits(result) {
 			add(hit.path, "hit", false, hit.lines, "")
 		}
-		if len(targets) == 0 {
+		if len(set.targets) == 0 {
 			if path, ok := input["path"].(string); ok {
 				add(path, "hit", true, nil, "")
 			}
@@ -363,19 +402,24 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		for _, hit := range parsePathHits(result) {
 			add(hit.path, "hit", false, nil, "")
 		}
-		if path, ok := input["path"].(string); ok && len(targets) == 0 {
+		if path, ok := input["path"].(string); ok && len(set.targets) == 0 {
 			add(path, "hit", true, nil, "")
 		}
 	case "Bash", "bash":
 		command := firstString(input, "command")
+		// a cwd argument re-roots relative paths the way the shell saw them
+		base := firstString(input, "cwd")
+		if base != "" && !filepath.IsAbs(base) && cwd != "" {
+			base = filepath.Join(cwd, base)
+		}
 		for _, path := range commandReadPaths(command) {
-			add(path, "read", true, nil, "")
+			add(path, "read", true, nil, base)
 		}
 		for _, path := range extractCommandPaths(command) {
-			add(path, "hit", true, nil, "")
+			add(path, "hit", true, nil, base)
 		}
 		for _, path := range extractPaths(command + "\n" + result) {
-			add(path, "hit", true, nil, "")
+			add(path, "hit", true, nil, base)
 		}
 	case "exec_command":
 		command := firstString(input, "cmd", "command")
@@ -418,7 +462,7 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 		}
 	case "apply_patch":
 		patch := firstString(input, "patch", "input", "_raw")
-		for _, path := range parsePatchPaths(patch) {
+		for _, path := range PatchPaths(patch) {
 			add(path, "edit", false, nil, "")
 		}
 	case "view_image":
@@ -431,7 +475,7 @@ func targetsFor(cwd, tool string, input map[string]any, result string) ([]model.
 			add(path, "hit", true, nil, "")
 		}
 	}
-	return targets, outside
+	return set.targets, set.outside
 }
 
 func firstString(input map[string]any, keys ...string) string {
@@ -514,7 +558,7 @@ func execPatchPaths(input map[string]any) []string {
 	}
 	for _, argument := range execToolArguments(source, "apply_patch") {
 		if strings.TrimSpace(argument) == "patch" {
-			return parsePatchPaths(patch)
+			return PatchPaths(patch)
 		}
 	}
 	return nil
@@ -822,7 +866,9 @@ func extractCommandPaths(command string) []string {
 	return paths
 }
 
-func parsePatchPaths(patch string) []string {
+// PatchPaths returns the files an apply_patch envelope adds, updates,
+// deletes, or moves to.
+func PatchPaths(patch string) []string {
 	matches := patchFileRe.FindAllStringSubmatch(patch, -1)
 	seen := map[string]bool{}
 	paths := make([]string, 0, len(matches))

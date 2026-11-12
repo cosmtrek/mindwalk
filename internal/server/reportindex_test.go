@@ -78,7 +78,7 @@ func TestSessionListReportStatesComeFromIndex(t *testing.T) {
 	reportsDir := t.TempDir()
 
 	// Seed reports before the server exists so its first listing sees them.
-	seed := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	seed := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	seed.reportCache.Dir = reportsDir
 	scored, err := seed.findSession("scored")
 	if err != nil {
@@ -95,7 +95,7 @@ func TestSessionListReportStatesComeFromIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	s.reportCache.Dir = reportsDir
 	resp := httptest.NewRecorder()
 	s.handleSessions(resp, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))

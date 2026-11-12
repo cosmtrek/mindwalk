@@ -26,7 +26,7 @@ func TestFreshScanPicksUpCodexTitleIndexChange(t *testing.T) {
 	}
 	writeIndex("Title One")
 
-	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "claude"), CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi")})
+	s := New(Config{ClaudeDir: filepath.Join(t.TempDir(), "claude"), CodexDir: codexDir, PiDir: filepath.Join(t.TempDir(), "pi"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	initial := requestSessions(t, s, "/api/sessions")
 	if len(initial) != 1 || initial[0].Title != "Title One" {
 		t.Fatalf("initial sessions = %#v", initial)

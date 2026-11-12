@@ -25,6 +25,7 @@ import (
 	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
+	"github.com/cosmtrek/mindwalk/internal/adapter/omp"
 	"github.com/cosmtrek/mindwalk/internal/adapter/pi"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
 	"github.com/cosmtrek/mindwalk/internal/judge"
@@ -39,6 +40,7 @@ type Config struct {
 	ClaudeDir   string
 	CodexDir    string
 	PiDir       string
+	OmpDir      string
 	OpenSession string
 	Dev         bool
 	RepoRoot    string
@@ -119,8 +121,10 @@ const (
 
 func New(cfg Config) *Server {
 	s := &Server{
-		cfg:             cfg,
-		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}, pi.Adapter{Dir: cfg.PiDir}},
+		cfg: cfg,
+		// omp precedes pi: a legacy omp session without a title slot has
+		// pi's shape, and omp claims it only from its own store
+		adapters:        []adapter.Source{claudecode.Adapter{Dir: cfg.ClaudeDir}, codex.Adapter{Dir: cfg.CodexDir}, omp.Adapter{Dir: cfg.OmpDir}, pi.Adapter{Dir: cfg.PiDir}},
 		agentGraphs:     map[string]agentGraphCacheEntry{},
 		agentGraphLoads: map[string]*inflightAgentGraph{},
 		summaries:       map[string]summaryCacheEntry{},
