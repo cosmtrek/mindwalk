@@ -11,6 +11,7 @@ import (
 	"github.com/cosmtrek/mindwalk/internal/adapter"
 	"github.com/cosmtrek/mindwalk/internal/adapter/claudecode"
 	"github.com/cosmtrek/mindwalk/internal/adapter/codex"
+	"github.com/cosmtrek/mindwalk/internal/adapter/omp"
 	"github.com/cosmtrek/mindwalk/internal/adapter/pi"
 	"github.com/cosmtrek/mindwalk/internal/citymap"
 	"github.com/cosmtrek/mindwalk/internal/judge"
@@ -56,12 +57,13 @@ func serve(args []string) error {
 	claudeDir := fs.String("claude-dir", claudecode.DefaultDir(), "Claude Code projects directory")
 	codexDir := fs.String("codex-dir", codex.DefaultDir(), "Codex sessions directory")
 	piDir := fs.String("pi-dir", pi.DefaultDir(), "pi sessions directory")
+	ompDir := fs.String("omp-dir", omp.DefaultDir(), "omp sessions directory")
 	dev := fs.Bool("dev", false, "prefer web/dist from the working tree")
 	noOpen := fs.Bool("no-open", false, "serve without opening a browser")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, Dev: *dev}).Start(!*noOpen)
+	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, OmpDir: *ompDir, Dev: *dev}).Start(!*noOpen)
 }
 
 func open(args []string) error {
@@ -70,6 +72,7 @@ func open(args []string) error {
 	claudeDir := fs.String("claude-dir", claudecode.DefaultDir(), "Claude Code projects directory")
 	codexDir := fs.String("codex-dir", codex.DefaultDir(), "Codex sessions directory")
 	piDir := fs.String("pi-dir", pi.DefaultDir(), "pi sessions directory")
+	ompDir := fs.String("omp-dir", omp.DefaultDir(), "omp sessions directory")
 	noOpen := fs.Bool("no-open", false, "serve without opening a browser")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -81,7 +84,7 @@ func open(args []string) error {
 	if err != nil {
 		return err
 	}
-	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, OpenSession: session}).Start(!*noOpen)
+	return server.New(server.Config{Port: *port, ClaudeDir: *claudeDir, CodexDir: *codexDir, PiDir: *piDir, OmpDir: *ompDir, OpenSession: session}).Start(!*noOpen)
 }
 
 func openMap(args []string) error {
@@ -216,7 +219,9 @@ func analyze(args []string) error {
 
 func parseTrace(path string) (*model.Trace, error) {
 	var lastErr error
-	for _, source := range []adapter.Source{claudecode.Adapter{}, codex.Adapter{}, pi.Adapter{}} {
+	// omp precedes pi: a legacy omp session without a title slot has pi's
+	// shape, and omp claims it only from its own store
+	for _, source := range []adapter.Source{claudecode.Adapter{}, codex.Adapter{}, omp.Adapter{}, pi.Adapter{}} {
 		trace, err := source.Parse(path)
 		if err == nil {
 			return trace, nil
@@ -269,8 +274,8 @@ func usage() {
 
 Usage:
   mindwalk                        serve on a random local port and open the UI
-  mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR] [--pi-dir DIR]
-  mindwalk open [--no-open] <session.jsonl> open a specific Claude Code, Codex, or pi session
+  mindwalk serve [--port N] [--no-open] [--claude-dir DIR] [--codex-dir DIR] [--pi-dir DIR] [--omp-dir DIR]
+  mindwalk open [--no-open] <session.jsonl> open a specific Claude Code, Codex, pi, or omp session
   mindwalk map [--no-open] <repo>  open the repository citymap with no session
   mindwalk build <repo> [-o out]  write citymap.json
   mindwalk trace <session> [-o out] write trace.json

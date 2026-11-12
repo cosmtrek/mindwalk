@@ -24,6 +24,8 @@ const (
 	AgentLinkMethodCodexParentThreadID      = "codex-parent-thread-id"
 	AgentLinkMethodClaudeToolUseID          = "claude-tool-use-id"
 	AgentLinkMethodClaudeSubagentsDirectory = "claude-subagents-directory"
+	AgentLinkMethodOmpTaskID                = "omp-task-id"
+	AgentLinkMethodOmpSessionDirectory      = "omp-session-directory"
 	AgentLinkMethodUnavailable              = "unavailable"
 )
 

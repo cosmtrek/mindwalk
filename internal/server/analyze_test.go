@@ -39,7 +39,7 @@ func TestAnalyzeEndpointRunsJudgeAndServesReport(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","sessionId":"eval","cwd":"/tmp","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/tmp/a.go"}}]}}`,
 		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","sessionId":"eval","cwd":"/tmp","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"ok","is_error":false}]}}`,
 	)
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	s.analyze.runner = stubJudge{output: stubJudgeOutput}
 	s.reportCache.Dir = t.TempDir()
 
@@ -90,7 +90,7 @@ func TestAnalyzeEndpointRunsJudgeAndServesReport(t *testing.T) {
 	}
 
 	// the report must survive a server restart via the disk cache
-	restarted := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	restarted := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	restarted.analyze.runner = stubJudge{output: stubJudgeOutput}
 	restarted.reportCache.Dir = s.reportCache.Dir
 	resp := httptest.NewRecorder()
@@ -110,7 +110,7 @@ func TestAnalyzeEndpointReportsJudgeFailure(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","sessionId":"fail","cwd":"/tmp","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/tmp/a.go"}}]}}`,
 		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","sessionId":"fail","cwd":"/tmp","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"ok","is_error":false}]}}`,
 	)
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	s.analyze.runner = stubJudge{output: "garbage, not json"}
 	s.reportCache.Dir = t.TempDir()
 
@@ -165,7 +165,7 @@ func TestAnalyzeRubricFalseBypassesReportCache(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","sessionId":"eval","cwd":"/tmp","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/tmp/a.go"}}]}}`,
 		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","sessionId":"eval","cwd":"/tmp","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"ok","is_error":false}]}}`,
 	)
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	s.analyze.runner = stubJudge{output: stubJudgeOutput}
 	s.reportCache.Dir = t.TempDir()
 
@@ -224,7 +224,7 @@ func TestAnalyzeConflictingConfigRejected(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-07-09T00:00:01Z","sessionId":"eval","cwd":"/tmp","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/tmp/a.go"}}]}}`,
 		`{"type":"user","timestamp":"2026-07-09T00:00:02Z","sessionId":"eval","cwd":"/tmp","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"ok","is_error":false}]}}`,
 	)
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	gate := gateJudge{release: make(chan struct{}), output: stubJudgeOutput}
 	s.analyze.runner = gate
 	s.reportCache.Dir = t.TempDir()
@@ -273,7 +273,7 @@ func TestAnalyzeEndpointRejectsBadBodies(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-07-14T00:00:01Z","sessionId":"eval","cwd":"/tmp","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/tmp/a.go"}}]}}`,
 		`{"type":"user","timestamp":"2026-07-14T00:00:02Z","sessionId":"eval","cwd":"/tmp","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"ok","is_error":false}]}}`,
 	)
-	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex")})
+	s := New(Config{ClaudeDir: claudeDir, CodexDir: filepath.Join(t.TempDir(), "codex"), OmpDir: filepath.Join(t.TempDir(), "omp")})
 	s.analyze.runner = stubJudge{output: stubJudgeOutput}
 	s.reportCache.Dir = t.TempDir()
 

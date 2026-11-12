@@ -19,8 +19,9 @@ Gotchas:
   starts do not create tabs or steal focus from the user's current work.
 - Port 8765 is the vite-proxy convention and is often already taken by a dev
   server; pick another port and check the log for `bind: address already in use`.
-- Sessions come from `~/.claude/projects`, `~/.codex/sessions`, and
-  `~/.pi/agent/sessions` — this machine has real data, no fixtures needed.
+- Sessions come from `~/.claude/projects`, `~/.codex/sessions`,
+  `~/.pi/agent/sessions`, and `~/.omp/agent/sessions` — this machine has real
+  data, no fixtures needed.
   `testdata/claude-session.jsonl` works via `mindwalk open`.
 - `bin/mindwalk map <repo>` (or the `/?map=1&repo=<path>` URL) serves the
   static citymap with no session.

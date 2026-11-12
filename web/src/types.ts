@@ -44,6 +44,8 @@ export type AgentLinkMethod =
   | "codex-parent-thread-id"
   | "claude-tool-use-id"
   | "claude-subagents-directory"
+  | "omp-task-id"
+  | "omp-session-directory"
   | "unavailable";
 
 export interface AgentGraph {
